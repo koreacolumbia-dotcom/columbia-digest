@@ -1356,7 +1356,7 @@ def send_daily_digest():
 if __name__ == "__main__":
     send_daily_digest()
 
-!pip install pyppeteer nest_asyncio
+
 
 import nest_asyncio, asyncio
 from pyppeteer import launch
