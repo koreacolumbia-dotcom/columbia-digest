@@ -7,7 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/1jvA7oBOH4oOzw3DlqT9fyUhwZ1iwoNbc
 """
 
-!pip install google-analytics-data
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
