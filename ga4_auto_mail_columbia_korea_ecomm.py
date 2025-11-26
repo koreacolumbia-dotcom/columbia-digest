@@ -1374,11 +1374,6 @@ async def capture_digest():
                           quality=95)
     await browser.close()
 
-await capture_digest()
-
-from columbia_daily_digest_v15 import (
-    compose_html_daily, build_core_kpi,
-    src_funnel_yesterday, src_traffic_yesterday,
-    src_search_yesterday, src_top_products_ga,
-    src_top_pages_ga
-)
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(capture_digest())
