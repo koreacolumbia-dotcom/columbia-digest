@@ -35,4 +35,5 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           DAILY_RECIPIENTS: "#Korea_ECOM@Columbia.com"
         run: |
-          python columbia_daily_digest.py
+          python ga4_auto_mail_columbia_korea_ecomm.py
+
