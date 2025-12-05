@@ -1393,26 +1393,28 @@ def compose_html_weekly(
 </table>
 """
 
-    search_graph_html = f"""
+    channel_wow_graph_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
               padding:8px 10px; border-collapse:separate; min-height:260px;">
   <tr><td>
     <div style="font-size:11px; font-weight:600; color:#1e293b; margin-bottom:4px;">
-      Search Users vs Non-Search Users
+      Top Channels by Revenue WoW Change
     </div>
-    <img src="{search_img}" style="width:100%; max-width:100%; height:auto; border-radius:8px; margin-bottom:6px;" />
+    <img src="{channel_wow_img}" style="width:100%; max-width:100%; height:auto; border-radius:8px; margin-bottom:6px;" />
     <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
-      {search_insight_line}
+      전주 대비 매출 증감률(%)이 가장 큰 채널을 상위 6개까지 보여줍니다. 증감 방향과 폭을 한 번에 확인할 수 있어
+      어떤 채널이 이번 주 성과를 끌어올렸는지 / 끌어내렸는지 빠르게 파악할 수 있습니다.
     </p>
     <p style="margin:0; font-size:10px; color:#111; line-height:1.6;">
-      <b>Action:</b> 검색 세션에서 CVR이 더 높다면 검색 박스와 추천 키워드, 검색 결과 상단 추천 영역 노출을 강화하고,
-      반대로 차이가 없거나 낮다면 검색 UX·결과 정렬·필터 구성을 조정해 A/B 테스트를 진행합니다.
+      <b>Action:</b> 매출 증감 폭이 큰 채널부터 예산·입찰·타겟·소재·랜딩 조정을 우선 적용하고, 특히 급감 채널은
+      이상 트래픽·소재 피로도·가격/재고 이슈 여부를 먼저 점검합니다.
     </p>
   </td></tr>
 </table>
 """
+
 
 
     graph_summary_cards = build_graph_summary_cards(
