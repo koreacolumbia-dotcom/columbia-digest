@@ -567,19 +567,19 @@ def build_traffic_wow(traffic_this: pd.DataFrame,
     merged = calc_wow_delta(traffic_this, traffic_last, "채널", metric_cols)
 
     rename = {
-        "UV_chg_pct": "UV Δ%(vs LW)",
-        "구매수_chg_pct": "구매수 Δ%(vs LW)",
-        "매출(만원)_chg_pct": "매출 Δ%(vs LW)",
-        "CVR(%)_chg_pct": "CVR Δp(vs LW)",
+        "UV_chg_pct": "UV Δ%",
+        "구매수_chg_pct": "구매수 Δ%",
+        "매출(만원)_chg_pct": "매출 Δ%",
+        "CVR(%)_chg_pct": "CVR Δp",
     }
     merged = merged.rename(columns=rename)
 
     out_cols = [
         "채널",
         "UV", "UV Δ%(vs LW)",
-        "구매수", "구매수 Δ%(vs LW)",
-        "매출(만원)", "매출 Δ%(vs LW)",
-        "CVR(%)", "CVR Δp(vs LW)",
+        "구매수", "구매수 Δ%",
+        "매출(만원)", "매출 Δ%",
+        "CVR(%)", "CVR Δp",
         "신규",
     ]
     return merged[out_cols].sort_values("매출(만원)", ascending=False)
@@ -592,15 +592,15 @@ def build_products_wow(products_this: pd.DataFrame,
     merged = calc_wow_delta(products_this, products_last, "상품명", metric_cols)
 
     rename = {
-        "구매수_chg_pct": "구매수 Δ%(vs LW)",
-        "매출(만원)_chg_pct": "매출 Δ%(vs LW)",
+        "구매수_chg_pct": "구매수 Δ%",
+        "매출(만원)_chg_pct": "매출 Δ%",
     }
     merged = merged.rename(columns=rename)
 
     out_cols = [
         "상품명",
-        "구매수", "구매수 Δ%(vs LW)",
-        "매출(만원)", "매출 Δ%(vs LW)",
+        "구매수", "구매수 Δ%",
+        "매출(만원)", "매출 Δ%",
     ]
     return merged[out_cols].sort_values("매출(만원)", ascending=False)
 
