@@ -851,23 +851,37 @@ def make_kpi_change_chart(kpi: Dict[str, float]) -> str:
 
 def make_funnel_chart(funnel_compare_df: pd.DataFrame) -> str:
     import matplotlib.pyplot as plt
+
     if funnel_compare_df is None or funnel_compare_df.empty:
         fig, ax = plt.subplots(figsize=(4.5, 3))
-        ax.text(0.5, 0.5, "데이터 없음", ha="center", va="center")
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
         ax.axis("off")
         return _fig_to_data_uri(fig)
-    labels = funnel_compare_df["구간"].tolist()
+
+    # 원본 한글 구간명
+    labels_kr = funnel_compare_df["구간"].tolist()
+
+    # 그래프에서 쓸 영어 라벨 매핑
+    label_map = {
+        "상품 상세 → 장바구니": "Detail→Cart",
+        "장바구니 → 체크아웃": "Cart→Checkout",
+        "체크아웃 → 결제완료": "Checkout→Purchase",
+    }
+    labels = [label_map.get(x, f"Step{i+1}") for i, x in enumerate(labels_kr)]
+
     this_rates = funnel_compare_df["이번주 전환율(%)"].tolist()
     last_rates = funnel_compare_df["전주 전환율(%)"].tolist()
     x = range(len(labels))
+
     fig, ax = plt.subplots(figsize=(4.5, 3))
     ax.bar([i - 0.15 for i in x], last_rates, width=0.3, label="LW")
     ax.bar([i + 0.15 for i in x], this_rates, width=0.3, label="THIS")
     ax.set_xticks(list(x))
-    ax.set_xticklabels(labels, rotation=20, ha="right")
+    ax.set_xticklabels(labels, rotation=15, ha="right")
     ax.set_ylabel("Conversion %")
     ax.set_title("Funnel Conversion WoW")
     ax.legend(fontsize=8)
+
     return _fig_to_data_uri(fig)
 
 
