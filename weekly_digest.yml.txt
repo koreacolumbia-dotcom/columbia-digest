@@ -1,0 +1,35 @@
+name: Columbia Weekly Digest
+
+on:
+  schedule:
+    # 매주 월요일 KST 08:30  = 매주 일요일 UTC 23:30
+    - cron: "30 23 * * SUN"
+  workflow_dispatch:
+
+jobs:
+  send-weekly:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          pip install google-analytics-data pandas google-auth
+
+      - name: Run weekly digest
+        env:
+          GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
+          GA4_SERVICE_ACCOUNT_JSON: ${{ secrets.GA4_SERVICE_ACCOUNT_JSON }}
+          SMTP_PROVIDER: "gmail"
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          WEEKLY_RECIPIENTS: ${{ secrets.WEEKLY_RECIPIENTS }}
+        run: |
+          python columbia_weekly_digest.py
