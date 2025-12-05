@@ -1528,7 +1528,7 @@ def compose_html_weekly(
   </tr>
   <tr>
     <td width="50%" valign="top" style="padding:4px 6px 8px 0%;">{mix_graph_html}</td>
-    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{search_graph_html}</td>
+    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{channel_wow_graph_html}</td>
   </tr>
 </table>
 
