@@ -885,35 +885,26 @@ def make_funnel_chart(funnel_compare_df: pd.DataFrame) -> str:
     return _fig_to_data_uri(fig)
 
 
-def make_search_heatmap_chart(search_df: pd.DataFrame) -> str:
+def make_search_cvr_bar_chart(search_df: pd.DataFrame) -> str:
     import matplotlib.pyplot as plt
 
-    # 데이터 없을 때 처리
     if search_df is None or search_df.empty:
         fig, ax = plt.subplots(figsize=(4.5, 3))
         ax.text(0.5, 0.5, "데이터 없음", ha="center", va="center")
         ax.axis("off")
         return _fig_to_data_uri(fig)
 
-    # 상위 20개 키워드만 사용
-    df = search_df.copy().head(20)
+    # CVR 기준 상위 15개 키워드
+    df = search_df.copy().sort_values("CVR(%)", ascending=False).head(15)
 
-    # 산점도용 값
-    x = df["검색수"].values          # Search Volume
-    y = df["CVR(%)"].values         # CVR(%)
-
-    # 검색수가 많을수록 점을 조금 더 크게
-    sizes = (x / x.max()) * 200 + 20
-
+    x = range(len(df))
     fig, ax = plt.subplots(figsize=(4.5, 3))
-    ax.scatter(x, y, s=sizes)
+    ax.bar(x, df["CVR(%)"])
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(df["키워드"], rotation=45, ha="right", fontsize=7)
+    ax.set_ylabel("CVR %")
+    ax.set_title("Top Search Keywords by CVR", fontsize=10)
 
-    ax.set_xlabel("Search Volume")
-    ax.set_ylabel("CVR (%)")
-    ax.set_title("Search Volume × CVR Scatter")
-
-    # 너무 붙지 않게 약간 여백
-    fig.tight_layout()
     return _fig_to_data_uri(fig)
 
 
