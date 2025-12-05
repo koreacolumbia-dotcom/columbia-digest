@@ -564,25 +564,30 @@ def build_traffic_wow(traffic_this: pd.DataFrame,
                       traffic_last: pd.DataFrame) -> pd.DataFrame:
     """채널별 이번주 지표 + 전주 대비 % 증감."""
     metric_cols = ["UV", "구매수", "매출(만원)", "CVR(%)"]
+
+    # calc_wow_delta는
+    #   - 각 metric에 대해 this, last, chg, chg_pct 등을 만들어주는 함수라고 가정
     merged = calc_wow_delta(traffic_this, traffic_last, "채널", metric_cols)
 
-    # 컬럼 이름에서 (vs LW) 빼고 깔끔하게
+    # 퍼센트 변화 컬럼만 깔끔한 이름으로 변경
     rename = {
-        "UV_chg_pct": "증감",
-        "구매수_chg_pct": "증감",
-        "매출(만원)_chg_pct": "증감",
-        "CVR(%)_chg_pct": "증",
+        "UV_chg_pct": "UV 증감",
+        "구매수_chg_pct": "구매수 증감",
+        "매출(만원)_chg_pct": "매출 증감",
+        "CVR(%)_chg_pct": "CVR 증감",
     }
     merged = merged.rename(columns=rename)
 
+    # 최종으로 보여줄 컬럼 순서 정의
     out_cols = [
         "채널",
-        "UV", "증감",
-        "구매수", "증감",
-        "매출(만원)", "증감",
-        "CVR(%)", "증감",
+        "UV", "UV 증감",
+        "구매수", "구매수 증감",
+        "매출(만원)", "매출 증감",
+        "CVR(%)", "CVR 증감",
         "신규",
     ]
+
     return merged[out_cols].sort_values("매출(만원)", ascending=False)
 
 
