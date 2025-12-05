@@ -1517,18 +1517,40 @@ def compose_html_weekly(
   03 · FUNNEL · TRAFFIC · PRODUCT · SEARCH
 </div>
 <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
+
+  <!-- Funnel -->
   <tr>
-    <td width="50%" valign="top" style="padding:4px 6px 8px 0%;">{funnel_raw_box}</td>
-    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{funnel_compare_box}</td>
+    <td width="50%" valign="top" style="padding:4px 6px 8px 0%;" align="center">
+      {funnel_raw_box}
+    </td>
+    <td width="50%" valign="top" style="padding:4px 0 8px 6px;" align="center">
+      {funnel_compare_box}
+    </td>
   </tr>
+
+  <!-- Traffic (전체 폭 단독) -->
   <tr>
-    <td width="50%" valign="top" style="padding:4px 6px 8px 0%;">{traffic_box}</td>
-    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{products_box}</td>
+    <td colspan="2" valign="top" style="padding:4px 0 8px 0%;" align="center">
+      {traffic_box}
+    </td>
   </tr>
+
+  <!-- Products (전체 폭 단독) -->
   <tr>
-    <td colspan="2" valign="top" style="padding:4px 0 0 0%;">{search_wow_box}</td>
+    <td colspan="2" valign="top" style="padding:4px 0 8px 0%;" align="center">
+      {products_box}
+    </td>
   </tr>
+
+  <!-- Search WoW -->
+  <tr>
+    <td colspan="2" valign="top" style="padding:4px 0 0 0%;" align="center">
+      {search_wow_box}
+    </td>
+  </tr>
+
 </table>
+
 
 <div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99;
             margin-top:20px; margin-bottom:8px;">
