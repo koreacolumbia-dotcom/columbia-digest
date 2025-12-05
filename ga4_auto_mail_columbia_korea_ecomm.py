@@ -805,11 +805,11 @@ def build_actions(kpi, funnel_rate_df, traffic_df, search_df):
 
     # 1) 상단 퍼널 / CVR 액션
     if kpi["revenue_lw_pct"] < 0 and kpi["uv_lw_pct"] < 0:
-        actions.append("· 매출·UV가 동반 하락 중이므로 상단 퍼널 신규 유입 캠페인(소재·입찰·예산)을 우선 점검합니다.")
+        actions.append("매출·UV가 동반 하락 중이므로 상단 퍼널 신규 유입 캠페인(소재·입찰·예산)을 우선 점검합니다.")
     elif kpi["cvr_lw_pct"] < 0:
-        actions.append("· CVR이 전주 대비 하락해 모바일 장바구니·체크아웃 구간의 전환율과 UX를 집중적으로 확인합니다.")
+        actions.append("CVR이 전주 대비 하락해 모바일 장바구니·체크아웃 구간의 전환율과 UX를 집중적으로 확인합니다.")
     else:
-        actions.append("· 성과가 좋은 채널/소재의 예산을 소폭 상향해 상승 구간을 더 밀어주는 실험을 진행합니다.")
+        actions.append("성과가 좋은 채널/소재의 예산을 소폭 상향해 상승 구간을 더 밀어주는 실험을 진행합니다.")
 
     # 2) 퍼널 이탈 액션
     if funnel_rate_df is not None and not funnel_rate_df.empty:
@@ -817,11 +817,11 @@ def build_actions(kpi, funnel_rate_df, traffic_df, search_df):
             funnel_rate_df["전환율(%)"] < funnel_rate_df["벤치마크(전환 최소)"]
         ]
         if not high_drop.empty:
-            actions.append("· 이탈이 큰 퍼널 구간의 배송비·쿠폰·CTA 카피를 이번 주 안에 최소 1개 이상 테스트합니다.")
+            actions.append("이탈이 큰 퍼널 구간의 배송비·쿠폰·CTA 카피를 이번 주 안에 최소 1개 이상 테스트합니다.")
         else:
-            actions.append("· 퍼널이 안정적인 편이므로 신규 유입 확대 및 VIP 재구매 쪽으로 테스트 리소스를 배분합니다.")
+            actions.append("퍼널이 안정적인 편이므로 신규 유입 확대 및 VIP 재구매 쪽으로 테스트 리소스를 배분합니다.")
     else:
-        actions.append("· 퍼널 데이터가 부족해 우선 전체 전환율 흐름을 모니터링하면서, 채널/상품 단위의 이상만 체크합니다.")
+        actions.append("퍼널 데이터가 부족해 우선 전체 전환율 흐름을 모니터링하면서, 채널/상품 단위의 이상만 체크합니다.")
 
     # 3) 채널 액션
     if traffic_df is not None and not traffic_df.empty:
@@ -834,12 +834,12 @@ def build_actions(kpi, funnel_rate_df, traffic_df, search_df):
     if search_df is not None and not search_df.empty:
         bad = search_df[search_df["CVR(%)"] < SEARCH_CVR_MIN]
         if not bad.empty:
-            actions.append("· 저전환 검색어의 노출 상품/필터를 재구성하거나, 상세 설명·가격 정책을 조정하는 안을 검토합니다.")
+            actions.append("저전환 검색어의 노출 상품/필터를 재구성하거나, 상세 설명·가격 정책을 조정하는 안을 검토합니다.")
         else:
-            actions.append("· 상위 검색어 기준으로 기획전/컬렉션 페이지를 추가 구성해 전환을 더 끌어올릴 수 있는지 테스트합니다.")
+            actions.append("상위 검색어 기준으로 기획전/컬렉션 페이지를 추가 구성해 전환을 더 끌어올릴 수 있는지 테스트합니다.")
 
     fallback = [
-        "· 오늘 눈에 띄는 채널/상품 1~2개를 선정해 소규모 예산으로 실험을 바로 실행합니다.",
+        "오늘 눈에 띄는 채널/상품 1~2개를 선정해 소규모 예산으로 실험을 바로 실행합니다.",
     ]
     while len(actions) < 4:
         actions.append(fallback[0])
