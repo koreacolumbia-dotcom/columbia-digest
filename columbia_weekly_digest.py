@@ -1164,6 +1164,9 @@ def compose_html_weekly(
     search_last: pd.DataFrame,
 ) -> str:
 
+    traffic_wow = build_traffic_wow(traffic_this, traffic_last)
+    products_wow = build_products_wow(products_this, products_last)
+
     insight_paragraph = build_weekly_insight_paragraph(
         kpi, funnel_compare_df, traffic_this, search_this
     )
