@@ -749,15 +749,15 @@ def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
     # 1) 매출 / UV / CVR
     if kpi["revenue_lw_pct"] > 0 and kpi["cvr_lw_pct"] > 0:
         signals.append(
-            f"· 매출이 전주 동일 요일 대비 {kpi['revenue_lw_pct']:.1f}% ↑, CVR은 {kpi['cvr_lw_pct']:.1f}p 개선되었습니다."
+            f"매출이 전주 동일 요일 대비 {kpi['revenue_lw_pct']:.1f}% ↑, CVR은 {kpi['cvr_lw_pct']:.1f}p 개선되었습니다."
         )
     elif kpi["revenue_lw_pct"] < 0 and kpi["uv_lw_pct"] < 0:
         signals.append(
-            f"· 매출({kpi['revenue_lw_pct']:.1f}%)과 UV({kpi['uv_lw_pct']:.1f}%)가 함께 감소해 상단 퍼널 유입 점검이 필요합니다."
+            f"매출({kpi['revenue_lw_pct']:.1f}%)과 UV({kpi['uv_lw_pct']:.1f}%)가 함께 감소해 상단 퍼널 유입 점검이 필요합니다."
         )
     else:
         signals.append(
-            f"· 매출 {kpi['revenue_lw_pct']:.1f}%, UV {kpi['uv_lw_pct']:.1f}%, CVR {kpi['cvr_lw_pct']:.1f}p 변동을 보였습니다."
+            f"매출 {kpi['revenue_lw_pct']:.1f}%, UV {kpi['uv_lw_pct']:.1f}%, CVR {kpi['cvr_lw_pct']:.1f}p 변동을 보였습니다."
         )
 
     # 2) 퍼널 이탈
@@ -768,16 +768,16 @@ def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
         if not high_drop.empty:
             names = ", ".join(high_drop["구간"].tolist())
             signals.append(
-                f"· 퍼널 기준 이탈이 큰 구간은 {names}로, 해당 단계 UI/혜택/카피 점검이 우선입니다."
+                f"퍼널 기준 이탈이 큰 구간은 {names}로, 해당 단계 UI/혜택/카피 점검이 우선입니다."
             )
         else:
-            signals.append("· 퍼널 전환율은 설정한 벤치마크 이상으로 전반적으로 안정적입니다.")
+            signals.append("퍼널 전환율은 설정한 벤치마크 이상으로 전반적으로 안정적입니다.")
 
     # 3) 채널
     if traffic_df is not None and not traffic_df.empty:
         top = traffic_df.iloc[0]
         signals.append(
-            f"· 유입은 {top['소스']} 채널(UV {int(top['UV']):,}명, CVR {top['CVR(%)']:.2f}%) 비중이 가장 큽니다."
+            f"유입은 {top['소스']} 채널(UV {int(top['UV']):,}명, CVR {top['CVR(%)']:.2f}%) 비중이 가장 큽니다."
         )
 
     # 4) 검색
@@ -786,7 +786,7 @@ def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
         if not bad.empty:
             top_bad = bad.head(2)["키워드"].tolist()
             signals.append(
-                f"· 저전환 검색어(CVR {SEARCH_CVR_MIN}% 미만)는 {', '.join(top_bad)} 등이 있어 결과 보완이 필요합니다."
+                f"저전환 검색어(CVR {SEARCH_CVR_MIN}% 미만)는 {', '.join(top_bad)} 등이 있어 결과 보완이 필요합니다."
             )
 
     fallback = [
