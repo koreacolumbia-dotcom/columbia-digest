@@ -1,4 +1,4 @@
-weekly_code = '''#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Columbia Sportswear Korea
@@ -1424,10 +1424,3 @@ def send_weekly_digest():
 
 if __name__ == "__main__":
     send_weekly_digest()
-"""
-
-path = "/mnt/data/columbia_weekly_digest_weekly_final.py"
-with open(path, "w", encoding="utf-8") as f:
-    f.write(weekly_code)
-
-path
