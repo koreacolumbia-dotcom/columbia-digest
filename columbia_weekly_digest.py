@@ -1398,11 +1398,11 @@ search_heatmap_html = f"""
   </tr>
 </table>
 
-            <div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99;
+<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99;
             margin-top:20px; margin-bottom:8px;">
   05 · INSIGHT
 </div>
-             
+
 {graph_summary_cards}
 
 <div style="margin-top:18px; font-size:10px; color:#99a; text-align:right;">
