@@ -326,6 +326,9 @@ def build_weekly_funnel_comparison():
     df_t = src_weekly_funnel(r["this"]["start"], r["this"]["end"])
     df_l = src_weekly_funnel(r["last"]["start"], r["last"]["end"])
 
+    # -----------------------------
+    # 1) 퍼널 전환율 비교 (지금 쓰고 있는 compare DF)
+    # -----------------------------
     def _get(df):
         base = df.set_index("단계")["수"]
         return (
@@ -353,17 +356,39 @@ def build_weekly_funnel_comparison():
         t_rate = _rate(a_t, b_t)
         l_rate = _rate(a_l, b_l)
         rows.append(
-            {"구간": name, "이번주 전환율(%)": t_rate, "전주 전환율(%)": l_rate, "변화(ppt)": round(t_rate - l_rate, 1)}
+            {
+                "구간": name,
+                "이번주 전환율(%)": t_rate,
+                "전주 전환율(%)": l_rate,
+                "변화(ppt)": round(t_rate - l_rate, 1),
+            }
         )
 
     compare = pd.DataFrame(rows)
 
+    # -----------------------------
+    # 2) RAW 이벤트 카운트 + 전주 대비 증감률 + 순서 정렬
+    # -----------------------------
+    # 이번주 / 전주 카운트 머지
     raw = df_t.rename(columns={"수": "이번주 수"}).merge(
         df_l.rename(columns={"수": "전주 수"}), on="단계", how="outer"
     ).fillna(0)
 
-    return raw, compare
+    raw["이번주 수"] = raw["이번주 수"].astype(int)
+    raw["전주 수"] = raw["전주 수"].astype(int)
 
+    # 증감률(%) 컬럼 추가
+    raw["증감률(%)"] = raw.apply(
+        lambda r: pct_change(r["이번주 수"], r["전주 수"]),
+        axis=1,
+    )
+
+    # 단계 순서: view_item → add_to_cart → begin_checkout → purchase
+    order = ["view_item", "add_to_cart", "begin_checkout", "purchase"]
+    raw["단계"] = pd.Categorical(raw["단계"], categories=order, ordered=True)
+    raw = raw.sort_values("단계").reset_index(drop=True)
+
+    return raw, compare
 
 def src_weekly_traffic(start_date: str, end_date: str) -> pd.DataFrame:
     df = ga_run_report(
