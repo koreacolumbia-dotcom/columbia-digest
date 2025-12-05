@@ -37,7 +37,11 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 
 WEEKLY_RECIPIENTS = [
-    e.strip() for e in os.getenv("WEEKLY_RECIPIENTS", "").split(",") if e.strip()
+    "Juwon.Lee@columbia.com",
+    "hugh.kang@columbia.com",
+    "hmkim@columbia.com",
+    "seonyoung.jang@columbia.com",
+    "dahae.kim@columbia.com",
 ]
 
 ALERT_RECIPIENT = os.getenv("ALERT_RECIPIENT", "").strip()
