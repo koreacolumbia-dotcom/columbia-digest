@@ -568,19 +568,19 @@ def build_traffic_wow(traffic_this: pd.DataFrame,
 
     # 컬럼 이름에서 (vs LW) 빼고 깔끔하게
     rename = {
-        "UV_chg_pct": "UV Δ%",
-        "구매수_chg_pct": "구매수 Δ%",
-        "매출(만원)_chg_pct": "매출 Δ%",
-        "CVR(%)_chg_pct": "CVR Δp",
+        "UV_chg_pct": "증감",
+        "구매수_chg_pct": "증감",
+        "매출(만원)_chg_pct": "증감",
+        "CVR(%)_chg_pct": "증",
     }
     merged = merged.rename(columns=rename)
 
     out_cols = [
         "채널",
-        "UV", "UV Δ%",
-        "구매수", "구매수 Δ%",
-        "매출(만원)", "매출 Δ%",
-        "CVR(%)", "CVR Δp",
+        "UV", "증감",
+        "구매수", "증감",
+        "매출(만원)", "증감",
+        "CVR(%)", "증감",
         "신규",
     ]
     return merged[out_cols].sort_values("매출(만원)", ascending=False)
