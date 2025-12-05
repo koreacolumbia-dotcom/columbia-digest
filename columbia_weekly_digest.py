@@ -927,69 +927,63 @@ def make_funnel_chart(funnel_compare_df: pd.DataFrame) -> str:
     return _fig_to_data_uri(fig)
 
 
-def plot_search_vs_nonsearch(df_sessions, out_path):
-    """
-    df_sessions: 세션 단위 혹은 집계된 데이터프레임
-        필수 컬럼
-        - is_search: bool (True = 검색 사용 세션, False = 비검색 세션)
-        - sessions: 세션 수
-        - transactions: 구매 수
-        - revenue: 매출
+def make_search_vs_nonsearch_chart(kpi: Dict[str, float],
+                                   search_df: pd.DataFrame):
+    import matplotlib.pyplot as plt
 
-    out_path: 저장할 파일 경로 (예: Path("output/search_vs_nonsearch.png"))
-    """
+    total_sessions = float(kpi.get("uv_this", 0))
+    total_orders = float(kpi.get("orders_this", 0))
 
-    # 집계
-    agg = (
-        df_sessions
-        .groupby("is_search")
-        .agg(
-            sessions=("sessions", "sum"),
-            transactions=("transactions", "sum"),
-            revenue=("revenue", "sum")
-        )
-        .reset_index()
-    )
+    # 데이터 없으면 빈 그림 + 기본 stats 리턴
+    if search_df is None or search_df.empty or total_sessions == 0:
+        fig, ax = plt.subplots(figsize=(4.5, 3))
+        ax.text(0.5, 0.5, "No search data", ha="center", va="center")
+        ax.axis("off")
+        return _fig_to_data_uri(fig), {
+            "has_data": False,
+            "search_cvr": 0.0,
+            "non_cvr": 0.0,
+            "cvr_diff_ppt": 0.0,
+        }
 
-    # CVR, AOV 계산
-    agg["cvr"] = agg["transactions"] / agg["sessions"]
-    agg["aov"] = agg["revenue"] / agg["transactions"].replace(0, np.nan)
+    # 검색 이벤트/구매 합계 (대략 세션/주문으로 사용)
+    search_sessions = float(search_df["검색수"].sum())
+    search_orders = float(search_df["구매수"].sum())
 
-    # 라벨 정리
-    agg["label"] = agg["is_search"].map({True: "Search Sessions", False: "Non-Search Sessions"})
+    # 전체보다 크지 않게 방어
+    search_sessions = min(search_sessions, total_sessions)
+    search_orders = min(search_orders, total_orders)
 
-    # ---- 그래프 (CVR 기준 비교) ----
-    fig, ax = plt.subplots(figsize=(4, 3))
+    non_sessions = max(total_sessions - search_sessions, 0.0)
+    non_orders = max(total_orders - search_orders, 0.0)
 
-    ax.bar(agg["label"], agg["cvr"] * 100)  # %로 표현
+    search_cvr = search_orders / search_sessions if search_sessions > 0 else 0.0
+    non_cvr = non_orders / non_sessions if non_sessions > 0 else 0.0
+    cvr_diff_ppt = (search_cvr - non_cvr) * 100  # percentage point 차이
 
-    ax.set_title("Search Users vs Non-Search Users (CVR)", fontsize=10)
+    labels = ["Search Users", "Non-Search Users"]
+    values = [search_cvr * 100, non_cvr * 100]
+
+    fig, ax = plt.subplots(figsize=(4.5, 3))
+    ax.bar(labels, values)
     ax.set_ylabel("CVR %")
-    ax.set_ylim(0, (agg["cvr"].max() * 100) * 1.3)
+    ax.set_title("Search Users vs Non-Search Users (CVR)")
+    ymax = max(values) * 1.3 if max(values) > 0 else 1
+    ax.set_ylim(0, ymax)
 
-    # 값 라벨
-    for i, v in enumerate(agg["cvr"] * 100):
+    for i, v in enumerate(values):
         ax.text(i, v, f"{v:.2f}%", ha="center", va="bottom", fontsize=8)
 
-    fig.tight_layout()
-    fig.savefig(out_path, bbox_inches="tight", dpi=150)
-    plt.close(fig)
+    img = _fig_to_data_uri(fig)
 
-    # 인사이트/액션용 수치 리턴
-    search_row = agg.loc[agg["is_search"] == True].iloc[0]
-    non_row = agg.loc[agg["is_search"] == False].iloc[0]
-
-    cvr_gap = (search_row["cvr"] / non_row["cvr"] - 1) if non_row["cvr"] > 0 else np.nan
-    aov_gap = (search_row["aov"] / non_row["aov"] - 1) if non_row["aov"] > 0 else np.nan
-
-    return {
-        "search_cvr": search_row["cvr"],
-        "non_cvr": non_row["cvr"],
-        "search_aov": search_row["aov"],
-        "non_aov": non_row["aov"],
-        "cvr_gap": cvr_gap,
-        "aov_gap": aov_gap,
+    stats = {
+        "has_data": True,
+        "search_cvr": search_cvr,
+        "non_cvr": non_cvr,
+        "cvr_diff_ppt": cvr_diff_ppt,
     }
+    return img, stats
+
 
 
 
