@@ -1593,26 +1593,26 @@ def compose_html_weekly(
                   <table role="presentation" cellspacing="0" cellpadding="0" align="right"
                          style="margin-bottom:8px;">
                     <tr>
-                      <td style="padding:0 3px;">
-                        <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
+                      <td style="padding:0 2px;">
+                        <span style="display:inline-block; font-size:9.5px; padding:2px 8px; border-radius:999px;
                                      background:#0055a5; color:#ffffff; border:1px solid #0055a5;">
                           WEEKLY
                         </span>
                       </td>
-                      <td style="padding:0 3px;">
-                        <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
+                      <td style="padding:0 2px;">
+                        <span style="display:inline-block; font-size:9.5px; padding:2px 8px; border-radius:999px;
                                      background:#fafbfd; color:#445; border:1px solid #dfe6f3;">
                           KPI
                         </span>
                       </td>
-                      <td style="padding:0 3px;">
-                        <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
+                      <td style="padding:0 2px;">
+                        <span style="display:inline-block; font-size:9.5px; padding:2px 8px; border-radius:999px;
                                      background:#fafbfd; color:#445; border:1px solid #dfe6f3;">
                           FUNNEL · TRAFFIC
                         </span>
                       </td>
-                      <td style="padding:0 3px;">
-                        <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
+                      <td style="padding:0 2px;">
+                        <span style="display:inline-block; font-size:9.5px; padding:2px 8px; border-radius:999px;
                                      background:#fafbfd; color:#445; border:1px solid #dfe6f3;">
                           GRAPH &amp; ANALYSIS
                         </span>
