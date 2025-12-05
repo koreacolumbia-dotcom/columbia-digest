@@ -61,7 +61,7 @@ DAILY_RECIPIENTS = [
     e.strip()
     for e in os.getenv(
         "DAILY_RECIPIENTS",
-        "hugh.kang@Columbia.com").split(",")
+        "#Korea_ECOM@Columbia.com").split(",")
     if e.strip()
 ]
 
