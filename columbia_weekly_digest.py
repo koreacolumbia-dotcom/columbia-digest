@@ -1159,9 +1159,11 @@ def compose_html_weekly(
     traffic_this: pd.DataFrame,
     traffic_last: pd.DataFrame,
     products_this: pd.DataFrame,
+    products_last: pd.DataFrame,   # ✅ 추가
     search_this: pd.DataFrame,
     search_last: pd.DataFrame,
 ) -> str:
+
     insight_paragraph = build_weekly_insight_paragraph(
         kpi, funnel_compare_df, traffic_this, search_this
     )
