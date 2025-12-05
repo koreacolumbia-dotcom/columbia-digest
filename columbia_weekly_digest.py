@@ -1264,7 +1264,20 @@ def compose_html_weekly(
     # Graph images
     kpi_img = make_kpi_change_chart(kpi)
     funnel_img = make_funnel_chart(funnel_compare_df)
-    search_img = make_search_cvr_bar_chart(search_this)
+    search_img, search_stats = make_search_vs_nonsearch_chart(kpi, search_this)
+
+    if search_stats["has_data"]:
+        search_insight_line = (
+            f"검색 사용 세션 CVR은 {search_stats['search_cvr']*100:.2f}%, "
+            f"비검색 세션 CVR은 {search_stats['non_cvr']*100:.2f}%로, "
+            f"차이는 {search_stats['cvr_diff_ppt']:+.2f}p 수준입니다."
+        )
+    else:
+        search_insight_line = (
+            "검색 이벤트 데이터가 적어 검색 사용 세션과 비검색 세션의 CVR 비교는 "
+            "참고용으로만 보는 것이 적절합니다."
+        )
+
 
     kpi_graph_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
