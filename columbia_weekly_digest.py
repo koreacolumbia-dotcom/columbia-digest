@@ -1568,6 +1568,7 @@ def send_weekly_digest():
         traffic_this = src_weekly_traffic(ranges["this"]["start"], ranges["this"]["end"])
         traffic_last = src_weekly_traffic(ranges["last"]["start"], ranges["last"]["end"])
         products_this = src_weekly_products(ranges["this"]["start"], ranges["this"]["end"])
+        products_last = src_weekly_products(ranges["last"]["start"], ranges["last"]["end"])
         search_this = src_weekly_search(ranges["this"]["start"], ranges["this"]["end"])
         search_last = src_weekly_search(ranges["last"]["start"], ranges["last"]["end"])
 
@@ -1578,9 +1579,11 @@ def send_weekly_digest():
             traffic_this=traffic_this,
             traffic_last=traffic_last,
             products_this=products_this,
+            products_last=products_last,   # ✅ 추가
             search_this=search_this,
             search_last=search_last,
         )
+
 
         subject = f"[Columbia] Weekly eCommerce Digest – {kpi['week_label']}"
         send_email_html(subject, html_body, WEEKLY_RECIPIENTS)
