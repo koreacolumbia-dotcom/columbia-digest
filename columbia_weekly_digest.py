@@ -504,6 +504,80 @@ def build_channel_mix(df_this: pd.DataFrame, df_last: pd.DataFrame) -> pd.DataFr
         )
     return pd.DataFrame(rows).sort_values("이번주 비중(%)", ascending=False)
 
+def calc_wow_delta(this_df: pd.DataFrame,
+                   last_df: pd.DataFrame,
+                   key_col: str,
+                   metric_cols: List[str]) -> pd.DataFrame:
+    """이번주 vs 전주 % 증감 계산용 공통 함수."""
+    if this_df is None or this_df.empty:
+        return pd.DataFrame(columns=[key_col] + metric_cols)
+
+    this = this_df.copy()
+    last = last_df.copy() if last_df is not None else pd.DataFrame(columns=[key_col] + metric_cols)
+
+    last = last[[key_col] + [c for c in metric_cols if c in last.columns]].copy()
+    last = last.rename(columns={c: f"{c}_LW" for c in metric_cols if c in last.columns})
+
+    merged = this.merge(last, on=key_col, how="left")
+
+    for col in metric_cols:
+        lw_col = f"{col}_LW"
+        if lw_col not in merged.columns:
+            merged[lw_col] = 0
+        merged[lw_col] = pd.to_numeric(merged[lw_col], errors="coerce").fillna(0)
+        merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
+        merged[f"{col}_chg_pct"] = merged.apply(
+            lambda r: pct_change(r[col], r[lw_col]),
+            axis=1,
+        )
+
+    return merged
+
+
+def build_traffic_wow(traffic_this: pd.DataFrame,
+                      traffic_last: pd.DataFrame) -> pd.DataFrame:
+    """채널별 이번주 지표 + 전주 대비 % 증감."""
+    metric_cols = ["UV", "구매수", "매출(만원)", "CVR(%)"]
+    merged = calc_wow_delta(traffic_this, traffic_last, "채널", metric_cols)
+
+    rename = {
+        "UV_chg_pct": "UV Δ%(vs LW)",
+        "구매수_chg_pct": "구매수 Δ%(vs LW)",
+        "매출(만원)_chg_pct": "매출 Δ%(vs LW)",
+        "CVR(%)_chg_pct": "CVR Δp(vs LW)",
+    }
+    merged = merged.rename(columns=rename)
+
+    out_cols = [
+        "채널",
+        "UV", "UV Δ%(vs LW)",
+        "구매수", "구매수 Δ%(vs LW)",
+        "매출(만원)", "매출 Δ%(vs LW)",
+        "CVR(%)", "CVR Δp(vs LW)",
+        "신규",
+    ]
+    return merged[out_cols].sort_values("매출(만원)", ascending=False)
+
+
+def build_products_wow(products_this: pd.DataFrame,
+                       products_last: pd.DataFrame) -> pd.DataFrame:
+    """상품별 이번주 지표 + 전주 대비 % 증감."""
+    metric_cols = ["구매수", "매출(만원)"]
+    merged = calc_wow_delta(products_this, products_last, "상품명", metric_cols)
+
+    rename = {
+        "구매수_chg_pct": "구매수 Δ%(vs LW)",
+        "매출(만원)_chg_pct": "매출 Δ%(vs LW)",
+    }
+    merged = merged.rename(columns=rename)
+
+    out_cols = [
+        "상품명",
+        "구매수", "구매수 Δ%(vs LW)",
+        "매출(만원)", "매출 Δ%(vs LW)",
+    ]
+    return merged[out_cols].sort_values("매출(만원)", ascending=False)
+
 
 # =====================================================================
 # 5) 인사이트 / 액션
