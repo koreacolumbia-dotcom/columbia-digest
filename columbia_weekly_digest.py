@@ -1342,18 +1342,6 @@ def compose_html_weekly(
     funnel_img = make_funnel_chart(funnel_compare_df)
     channel_wow_img = make_channel_wow_chart(traffic_this, traffic_last)
 
-    if search_stats["has_data"]:
-        search_insight_line = (
-            f"검색 사용 세션 CVR은 {search_stats['search_cvr']*100:.2f}%, "
-            f"비검색 세션 CVR은 {search_stats['non_cvr']*100:.2f}%로, "
-            f"차이는 {search_stats['cvr_diff_ppt']:+.2f}p 수준입니다."
-        )
-    else:
-        search_insight_line = (
-            "검색 이벤트 데이터가 적어 검색 사용 세션과 비검색 세션의 CVR 비교는 "
-            "참고용으로만 보는 것이 적절합니다."
-        )
-
 
     kpi_graph_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
