@@ -781,8 +781,50 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
     if max_rows is not None:
         df = df.head(max_rows)
 
-    html = df.to_html(index=False, border=0, justify="left", escape=False)
+    # ----- 1) 복사본 만들기 -----
+    df2 = df.copy()
 
+    # "증감/변화/Δ" 들어가는 컬럼만 골라서 화살표/색 적용
+    change_cols = [
+        c for c in df2.columns
+        if any(k in str(c) for k in ["Δ", "증감", "변화"])
+    ]
+
+    for col in change_cols:
+        def _fmt(v):
+            # 숫자로 변환 안 되면 그대로 둠
+            try:
+                val = float(v)
+            except Exception:
+                return v
+
+            if val > 0:
+                arrow = "▲"
+                color = "#2563eb"   # 파랑
+            elif val < 0:
+                arrow = "▼"
+                color = "#dc2626"   # 빨강
+            else:
+                arrow = ""
+                color = "#333333"
+
+            abs_val = abs(val)
+
+            if arrow:
+                return (
+                    f'<span style="color:{color}; font-weight:600;">'
+                    f'{arrow} {abs_val:.1f}'
+                    f'</span>'
+                )
+            else:
+                return f"{abs_val:.1f}"
+
+        df2[col] = df2[col].apply(_fmt)
+
+    # ----- 2) HTML 변환 (escape=False 꼭 유지) -----
+    html = df2.to_html(index=False, border=0, justify="left", escape=False)
+
+    # 테이블 / 헤더 스타일
     html = html.replace(
         '<table border="0" class="dataframe">',
         '<table style="width:100%; border-collapse:collapse; font-size:10px;">',
@@ -795,45 +837,12 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
         "<th>",
         "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555;\">",
     )
-
-    # =============================
-    # ▲ ▼ 화살표 + 색상 적용
-    # =============================
-    def arrowize(match):
-        raw = match.group(1).strip()   # 예: -20.9, +6.1, -1.6p, +3.2%
-        
-        sign = raw[0]
-        number = raw[1:]
-
-        if sign == "+":
-            arrow = "▲"
-            color = "#2563eb"   # 파랑
-        else:
-            arrow = "▼"
-            color = "#dc2626"   # 빨강
-
-        return (
-            f'<td style="padding:3px 6px; border-bottom:1px solid #f1f3fa; '
-            f'text-align:left; color:{color}; font-weight:600;">'
-            f'{arrow} {number}'
-            f'</td>'
-        )
-
-    # ✅ 부호 포함 숫자 (단위 유무 무관) 전체 매칭
-    html = re.sub(
-        r"<td>([+-]\s?\d+(?:\.\d+)?(?:%|p)?)</td>",
-        arrowize,
-        html
-    )
-
-    # 일반 셀 스타일
     html = html.replace(
         "<td>",
         "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333;\">",
     )
 
     return html
-
 
 
 
