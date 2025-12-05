@@ -777,9 +777,13 @@ def build_weekly_actions(
 def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
     if df is None or df.empty:
         return "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
+
     if max_rows is not None:
         df = df.head(max_rows)
+
     html = df.to_html(index=False, border=0, justify="left", escape=False)
+
+    # 테이블/헤더 공통 스타일
     html = html.replace(
         '<table border="0" class="dataframe">',
         '<table style="width:100%; border-collapse:collapse; font-size:10px;">',
@@ -792,11 +796,49 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
         "<th>",
         "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555;\">",
     )
+
+    # ===== 증감률 셀에 ▲/▼ + 색 입히기 =====
+    def arrowize(match):
+        raw = match.group(1)  # 예: "+3.2%" , "-1.5p"
+        s = raw.strip()
+
+        # 부호 체크
+        sign = "+" if s.startswith("+") else "-" if s.startswith("-") else None
+        if sign is None:
+            # 부호 없으면 그대로 둠
+            return match.group(0)
+
+        # 부호 뗀 숫자 + 단위 부분 (예: "3.2%" / "1.5p")
+        value_text = s[1:].strip()
+
+        if sign == "+":
+            arrow = "▲"
+            color = "#2563eb"  # 파란색
+        else:
+            arrow = "▼"
+            color = "#dc2626"  # 빨간색
+
+        return (
+            f'<td style="padding:3px 6px; border-bottom:1px solid #f1f3fa; '
+            f'text-align:left; color:{color}; font-weight:600;">'
+            f'{arrow} {value_text}</td>'
+        )
+
+    # +n% / -n% / +n.p / -n.p 패턴에만 적용
+    html = re.sub(
+        r"<td>([+-]\d+\.?\d*\s*(?:%|p))</td>",
+        arrowize,
+        html,
+    )
+
+    # 나머지 일반 td 스타일
     html = html.replace(
         "<td>",
         "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333;\">",
     )
+
     return html
+
 
 
 def build_kpi_cards_html(kpi: Dict[str, float]) -> str:
