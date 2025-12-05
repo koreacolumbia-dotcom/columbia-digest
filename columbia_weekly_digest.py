@@ -783,10 +783,11 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
     if max_rows is not None:
         df = df.head(max_rows)
 
-    # ----- 1) 복사본 만들기 -----
     df2 = df.copy()
 
-    # "증감/변화/Δ" 들어가는 컬럼만 골라서 화살표/색 적용
+    # ==========================
+    # 증감 컬럼 ▲ ▼ 색상 처리
+    # ==========================
     change_cols = [
         c for c in df2.columns
         if any(k in str(c) for k in ["Δ", "증감", "변화"])
@@ -794,38 +795,35 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
 
     for col in change_cols:
         def _fmt(v):
-            # 숫자로 변환 안 되면 그대로 둠
             try:
                 val = float(v)
-            except Exception:
+            except:
                 return v
 
             if val > 0:
                 arrow = "▲"
-                color = "#2563eb"   # 파랑
+                color = "#2563eb"   # blue
             elif val < 0:
                 arrow = "▼"
-                color = "#dc2626"   # 빨강
+                color = "#dc2626"   # red
             else:
                 arrow = ""
                 color = "#333333"
 
-            abs_val = abs(val)
-
             if arrow:
                 return (
                     f'<span style="color:{color}; font-weight:600;">'
-                    f'{arrow} {abs_val:.1f}'
+                    f'{arrow} {abs(val):.1f}'
                     f'</span>'
                 )
             else:
-                return f"{abs_val:.1f}"
+                return f"{abs(val):.1f}"
 
         df2[col] = df2[col].apply(_fmt)
 
-        # =============================
-    # Search WoW 전용 하이라이트
-    # =============================
+    # =================================
+    # Search WoW 키워드 추가 하이라이트
+    # =================================
     if "키워드" in df2.columns and "검색수 증감" in df2.columns:
 
         def highlight_search_growth(row):
@@ -835,18 +833,14 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
             except:
                 return row
 
-            # 초강력 성장 (메인 하이라이트)
             if diff >= 30 or rate >= 80:
-                bg = "background:#fff7cc;"    # 연노랑
+                bg = "background:#fff7cc;"
                 fw = "font-weight:700;"
                 icon = "🔥 "
-
-            # 일반 상승
             elif diff >= 15:
-                bg = "background:#eaf2ff;"    # 연파랑
+                bg = "background:#eaf2ff;"
                 fw = "font-weight:600;"
                 icon = "▲ "
-
             else:
                 bg = ""
                 fw = ""
@@ -859,17 +853,41 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
                 f'</span>'
             )
 
-            # 증감 숫자 강조
-            row["검색수 증감"] = f'<span style="{fw}">{row["검색수 증감"]}</span>'
+            # 증감 강조
+            row["검색수 증감"] = (
+                f'<span style="{fw}">'
+                f'{row["검색수 증감"]}'
+                f'</span>'
+            )
 
             if "검색수 증감률(%)" in row:
                 row["검색수 증감률(%)"] = (
+                    f'<span style="{fw}">'
+                    f'{row["검색수 증감률(%)"]}'
+                    f'</span>'
+                )
 
+            # 배경 적용
+            if bg:
+                row["키워드"] = f'<span style="{bg} padding:2px 4px; border-radius:4px;">{row["키워드"]}</span>'
+                row["검색수 증감"] = f'<span style="{bg} padding:2px 4px; border-radius:4px;">{row["검색수 증감"]}</span>'
 
-    # ----- 2) HTML 변환 (escape=False 꼭 유지) -----
+                if "검색수 증감률(%)" in row:
+                    row["검색수 증감률(%)"] = (
+                        f'<span style="{bg} padding:2px 4px; border-radius:4px;">'
+                        f'{row["검색수 증감률(%)"]}'
+                        f'</span>'
+                    )
+
+            return row
+
+        df2 = df2.apply(highlight_search_growth, axis=1)
+
+    # ==========================
+    # HTML 변환
+    # ==========================
     html = df2.to_html(index=False, border=0, justify="left", escape=False)
 
-    # 테이블 / 헤더 스타일
     html = html.replace(
         '<table border="0" class="dataframe">',
         '<table style="width:100%; border-collapse:collapse; font-size:10px;">',
@@ -880,14 +898,17 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
     )
     html = html.replace(
         "<th>",
-        "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555;\">",
+        "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; "
+        "text-align:left; font-weight:600; color:#555;\">",
     )
     html = html.replace(
         "<td>",
-        "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333;\">",
+        "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; "
+        "text-align:left; color:#333;\">",
     )
 
     return html
+
 
 
 
