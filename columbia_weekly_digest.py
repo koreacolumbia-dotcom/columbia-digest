@@ -1167,7 +1167,7 @@ def compose_html_weekly(
     # Graph images
     kpi_img = make_kpi_change_chart(kpi)
     funnel_img = make_funnel_chart(funnel_compare_df)
-    search_img = make_search_heatmap_chart(search_this)
+    search_img = make_search_cvr_bar_chart(search_this)
 
     kpi_graph_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
