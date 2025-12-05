@@ -1192,15 +1192,15 @@ def compose_html_weekly(
       이 그래프는 Revenue, UV, CVR, Orders, AOV, New Users의 전주 대비 증감률을 보여줍니다.
       Revenue {kpi['revenue_lw_pct']:+.1f}%, UV {kpi['uv_lw_pct']:+.1f}%, CVR {kpi['cvr_lw_pct']:+.1f}p 수준의 변화가 한 눈에 보입니다.
     </p>
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       매출 변화가 유입(UV) 중심인지, 전환(CVR)·객단가(AOV) 중심인지 빠르게 파악해
       어떤 레버가 핵심이었는지 분리해 볼 수 있습니다.
     </p>
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       <b>Action:</b> 증감 폭이 큰 지표 순으로 캠페인/랜딩/프로모션 우선순위를 재조정하고,
       감소 폭이 큰 지표는 최소 1개 이상의 A/B 테스트로 원인을 검증합니다.
     </p>
-    <p style="margin:0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0; font-size:10px; color:#111; line-height:1.6%;">
       특히 Revenue와 UV 방향이 엇갈릴 경우, 유입 품질과 랜딩 페이지/퍼널 이슈를 분리 분석하는 액션이 필요합니다.
     </p>
   </td></tr>
@@ -1217,16 +1217,16 @@ def compose_html_weekly(
       Funnel 비교 (이번주 vs 전주)
     </div>
     <img src="{funnel_img}" style="width:100%; max-width:100%; height:auto; border-radius:8px; margin-bottom:6px;" />
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       각 퍼널 단계별 이번주와 전주 전환율을 나란히 비교해 어느 구간에서 이탈이 확대·완화되었는지 보여줍니다.
     </p>
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       전환율 격차가 큰 구간은 UX, 혜택 구조, 상품/가격 구성 측면에서 집중 점검이 필요한 지점입니다.
     </p>
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       <b>Action:</b> 전환율 하락 폭이 가장 큰 구간을 1순위로 선정해, 해당 단계에서 최소 2개 이상의 UX/혜택 A/B 테스트를 설계합니다.
     </p>
-    <p style="margin:0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0; font-size:10px; color:#111; line-height:1.6%;">
       반대로 전환율이 개선된 구간의 요소는 다른 카테고리/채널에도 복제 적용해 확장 효과를 검증합니다.
     </p>
   </td></tr>
@@ -1246,21 +1246,21 @@ def compose_html_weekly(
       채널별 매출 비중과 전주 대비 변화(ppt)를 막대 형태로 표현한 영역입니다.
     </div>
     {mix_bars_html}
-    <p style="margin:6px 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:6px 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       비중이 높은 채널일수록 작은 비중 변화가 전체 매출에 미치는 영향이 크기 때문에,
       상위 채널의 증감 방향을 우선적으로 보는 것이 중요합니다.
     </p>
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       <b>Action:</b> 매출 비중이 늘어난 채널에는 예산/소재 확장을, 줄어든 채널에는 타겟·소재·랜딩 조정 실험을 우선 배치합니다.
     </p>
-    <p style="margin:0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0; font-size:10px; color:#111; line-height:1.6%;">
       특히 오가닉에서 페이드로의 비중 이동이 크다면, 장기적으로는 오가닉 콘텐츠/검색 자산을 강화하는 방향의 액션이 필요합니다.
     </p>
   </td></tr>
 </table>
 """
 
-search_heatmap_html = f"""
+    search_heatmap_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
@@ -1270,12 +1270,12 @@ search_heatmap_html = f"""
       Search Volume × CVR Scatter
     </div>
     <img src="{search_img}" style="width:100%; max-width:100%; height:auto; border-radius:8px; margin-bottom:6px;" />
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       각 검색 키워드의 검색량(Search Volume)과 전환율(CVR)의 관계를 산점도로 시각화하였습니다.
       오른쪽 하단 영역은 트래픽은 크나 전환 효율이 낮은 키워드로, UX·상품 구성·가격 메시지 최적화가 필요한
       최우선 개선 후보군입니다.
     </p>
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
+    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6%;">
       왼쪽 상단 영역은 소량 트래픽 대비 높은 전환을 보이는 키워드로, 노출 확대 및 기획전/광고 확장 적용 시
       효율 상승 잠재력이 큰 영역입니다.
       <b>Action:</b> 우측 하단(검색량 高 × CVR 低) 키워드를 1차 개선 타겟으로 삼아 검색 결과 페이지 UX·랜딩 SKU를 A/B 테스트하고,
@@ -1284,7 +1284,6 @@ search_heatmap_html = f"""
   </td></tr>
 </table>
 """
-
 
     graph_summary_cards = build_graph_summary_cards(
         kpi, funnel_compare_df, mix_df, search_this
@@ -1322,7 +1321,7 @@ search_heatmap_html = f"""
                                background:#eaf3ff; color:#0055a5; margin-bottom:6px;">
                     {kpi['week_label']} 기준 (직전 7일)
                   </span>
-                  <div style="font-size:11px; color:#777; margin-top:6px; margin-bottom:2px; line-height:1.6;">
+                  <div style="font-size:11px; color:#777; margin-top:6px; margin-bottom:2px; line-height:1.6%;">
                     매출 · UV · CVR · AOV · 신규 · 오가닉 비중을 중심으로 주간 GA4 데이터를 PPT용 구조 그대로 요약한 리포트입니다.
                   </div>
                 </td>
@@ -1420,7 +1419,6 @@ search_heatmap_html = f"""
 </html>
 """
     return html
-
 
 # =====================================================================
 # 10) 메인 실행
