@@ -927,28 +927,69 @@ def make_funnel_chart(funnel_compare_df: pd.DataFrame) -> str:
     return _fig_to_data_uri(fig)
 
 
-def make_search_cvr_bar_chart(search_df: pd.DataFrame) -> str:
-    import matplotlib.pyplot as plt
+def plot_search_vs_nonsearch(df_sessions, out_path):
+    """
+    df_sessions: 세션 단위 혹은 집계된 데이터프레임
+        필수 컬럼
+        - is_search: bool (True = 검색 사용 세션, False = 비검색 세션)
+        - sessions: 세션 수
+        - transactions: 구매 수
+        - revenue: 매출
 
-    if search_df is None or search_df.empty:
-        fig, ax = plt.subplots(figsize=(4.5, 3))
-        ax.text(0.5, 0.5, "데이터 없음", ha="center", va="center")
-        ax.axis("off")
-        return _fig_to_data_uri(fig)
+    out_path: 저장할 파일 경로 (예: Path("output/search_vs_nonsearch.png"))
+    """
 
-    # CVR 기준 상위 15개 키워드
-    df = search_df.copy().sort_values("CVR(%)", ascending=False).head(15)
+    # 집계
+    agg = (
+        df_sessions
+        .groupby("is_search")
+        .agg(
+            sessions=("sessions", "sum"),
+            transactions=("transactions", "sum"),
+            revenue=("revenue", "sum")
+        )
+        .reset_index()
+    )
 
-    x = range(len(df))
-    fig, ax = plt.subplots(figsize=(4.5, 3))
-    ax.bar(x, df["CVR(%)"])
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(df["키워드"], rotation=45, ha="right", fontsize=7)
+    # CVR, AOV 계산
+    agg["cvr"] = agg["transactions"] / agg["sessions"]
+    agg["aov"] = agg["revenue"] / agg["transactions"].replace(0, np.nan)
+
+    # 라벨 정리
+    agg["label"] = agg["is_search"].map({True: "Search Sessions", False: "Non-Search Sessions"})
+
+    # ---- 그래프 (CVR 기준 비교) ----
+    fig, ax = plt.subplots(figsize=(4, 3))
+
+    ax.bar(agg["label"], agg["cvr"] * 100)  # %로 표현
+
+    ax.set_title("Search Users vs Non-Search Users (CVR)", fontsize=10)
     ax.set_ylabel("CVR %")
-    ax.set_title("Top Search Keywords by CVR", fontsize=10)
+    ax.set_ylim(0, (agg["cvr"].max() * 100) * 1.3)
 
-    return _fig_to_data_uri(fig)
+    # 값 라벨
+    for i, v in enumerate(agg["cvr"] * 100):
+        ax.text(i, v, f"{v:.2f}%", ha="center", va="bottom", fontsize=8)
 
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight", dpi=150)
+    plt.close(fig)
+
+    # 인사이트/액션용 수치 리턴
+    search_row = agg.loc[agg["is_search"] == True].iloc[0]
+    non_row = agg.loc[agg["is_search"] == False].iloc[0]
+
+    cvr_gap = (search_row["cvr"] / non_row["cvr"] - 1) if non_row["cvr"] > 0 else np.nan
+    aov_gap = (search_row["aov"] / non_row["aov"] - 1) if non_row["aov"] > 0 else np.nan
+
+    return {
+        "search_cvr": search_row["cvr"],
+        "non_cvr": non_row["cvr"],
+        "search_aov": search_row["aov"],
+        "non_aov": non_row["aov"],
+        "cvr_gap": cvr_gap,
+        "aov_gap": aov_gap,
+    }
 
 
 
