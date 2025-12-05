@@ -1424,6 +1424,7 @@ def send_weekly_digest():
         traffic_last = src_weekly_traffic(ranges["last"]["start"], ranges["last"]["end"])
         products_this = src_weekly_products(ranges["this"]["start"], ranges["this"]["end"])
         search_this = src_weekly_search(ranges["this"]["start"], ranges["this"]["end"])
+        search_last = src_weekly_search(ranges["last"]["start"], ranges["last"]["end"])
 
         html_body = compose_html_weekly(
             kpi=kpi,
@@ -1433,6 +1434,7 @@ def send_weekly_digest():
             traffic_last=traffic_last,
             products_this=products_this,
             search_this=search_this,
+            search_last=search_last,
         )
 
         subject = f"[Columbia] Weekly eCommerce Digest – {kpi['week_label']}"
@@ -1442,6 +1444,7 @@ def send_weekly_digest():
         msg = f"[ERROR] Weekly digest 생성/발송 중 오류: {e}"
         print(msg)
         send_critical_alert("[Columbia] Weekly Digest Error", msg)
+
 
 
 if __name__ == "__main__":
