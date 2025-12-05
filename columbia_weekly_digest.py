@@ -885,23 +885,30 @@ def make_funnel_chart(funnel_compare_df: pd.DataFrame) -> str:
     return _fig_to_data_uri(fig)
 
 
-def make_search_heatmap_chart(search_df: pd.DataFrame) -> str:
+def make_search_scatter_chart(search_df: pd.DataFrame) -> str:
     import matplotlib.pyplot as plt
+
     if search_df is None or search_df.empty:
         fig, ax = plt.subplots(figsize=(4.5, 3))
-        ax.text(0.5, 0.5, "데이터 없음", ha="center", va="center")
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
         ax.axis("off")
         return _fig_to_data_uri(fig)
-    df = search_df.copy().head(20)
-    vals = df["CVR(%)"].values.reshape(-1, 1)
-    fig, ax = plt.subplots(figsize=(2.5, 4))
-    im = ax.imshow(vals, aspect="auto")
-    ax.set_yticks(range(len(df)))
-    ax.set_yticklabels(df["키워드"], fontsize=7)
-    ax.set_xticks([])
-    ax.set_title("Search CVR Heatmap", fontsize=9)
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    df = search_df.copy().head(30)
+
+    x = df["검색수"]
+    y = df["CVR(%)"]
+    sizes = df["구매수"] * 5 + 20  # 구매수 비례 버블 크기
+
+    fig, ax = plt.subplots(figsize=(4.5, 3))
+    ax.scatter(x, y, s=sizes)
+
+    ax.set_xlabel("Search Volume")
+    ax.set_ylabel("CVR (%)")
+    ax.set_title("Search Volume vs CVR")
+
     return _fig_to_data_uri(fig)
+
 
 
 # =====================================================================
