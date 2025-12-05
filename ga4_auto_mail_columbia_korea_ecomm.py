@@ -1,6 +1,4 @@
-from textwrap import dedent
 
-code = dedent('''
 # -*- coding: utf-8 -*-
 """GA4 자동화 이메일 11.24 ver
 
@@ -195,7 +193,7 @@ def send_email_html(subject: str, html_body: str, recipients, jpeg_path: str = "
         return
 
     if not (SMTP_USER and SMTP_PASS):
-        print("[WARN] SMTP_USER/SMTP_PASS 없음 – 아래는 HTML 미리보기입니다.\\n")
+        print("[WARN] SMTP_USER/SMTP_PASS 없음 – 아래는 HTML 미리보기입니다.\n")
         print(html_body[:3000])
         return
 
@@ -883,17 +881,17 @@ def compose_html_daily(
             )
             inner = inner.replace(
                 "<th>",
-                "<th style=\\"padding:3px 6px; border-bottom:1px solid #e1e4f0; "
-                "text-align:left; font-weight:600; color:#555;\\">",
+                "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; "
+                "text-align:left; font-weight:600; color:#555;\">",
             )
             inner = inner.replace(
                 "<td>",
-                "<td style=\\"padding:3px 6px; border-bottom:1px solid #f1f3fa; "
-                "text-align:left; color:#333;\\">",
+                "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; "
+                "text-align:left; color:#333;\">",
             )
             table_html = inner
 
-        return f\"\"\"
+        return f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
@@ -908,13 +906,13 @@ def compose_html_daily(
     {table_html}
   </td></tr>
 </table>
-\"\"\"
+"""
 
     # ---- 시간대별 카드: 트래픽 막대 + 매출 막대 ----
     def build_hourly_card(df):
         if df is None or df.empty:
             body_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
-            return f\"\"\"
+            return f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
@@ -929,7 +927,7 @@ def compose_html_daily(
     {body_html}
   </td></tr>
 </table>
-\"\"\"
+"""
 
         df = df.copy()
 
@@ -938,7 +936,7 @@ def compose_html_daily(
             df["시간_숫자"] = (
                 df["시간"]
                 .astype(str)
-                .str.extract(r"(\\d+)")
+                .str.extract(r"(\d+)")
                 .fillna("0")
                 .astype(int)
             )
@@ -972,14 +970,14 @@ def compose_html_daily(
         for s in sessions:
             ratio = s / max_sess if max_sess > 0 else 0
             h = max(3, int(ratio * max_bar_height))
-            sess_bar_row += f\"\"\"
+            sess_bar_row += f"""
 <td style="vertical-align:bottom; text-align:center;">
   <div style="margin:0 auto; width:10px; height:{h}px;
               border-radius:999px 999px 0 0; background:#2563eb;"></div>
 </td>
-\"\"\"
+"""
 
-        traffic_chart_html = f\"\"\"
+        traffic_chart_html = f"""
 <div style="font-size:10px; color:#555; margin-bottom:4px;">
   · 트래픽 (세션수, 막대)
 </div>
@@ -991,21 +989,21 @@ def compose_html_daily(
     {labels_row}
   </tr>
 </table>
-\"\"\"
+"""
 
         # 매출 막대들
         rev_bar_row = ""
         for r in revenue:
             ratio = r / max_rev if max_rev > 0 else 0
             h = max(3, int(ratio * max_bar_height))
-            rev_bar_row += f\"\"\"
+            rev_bar_row += f"""
 <td style="vertical-align:bottom; text-align:center;">
   <div style="margin:0 auto; width:10px; height:{h}px;
               border-radius:999px 999px 0 0; background:#fb923c;"></div>
 </td>
-\"\"\"
+"""
 
-        revenue_chart_html = f\"\"\"
+        revenue_chart_html = f"""
 <div style="font-size:10px; color:#555; margin-top:12px; margin-bottom:4px;">
   · 매출 (원, 막대)
 </div>
@@ -1017,11 +1015,11 @@ def compose_html_daily(
     {labels_row}
   </tr>
 </table>
-\"\"\"
+"""
 
         body_html = traffic_chart_html + revenue_chart_html
 
-        return f\"\"\"
+        return f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
@@ -1036,7 +1034,7 @@ def compose_html_daily(
     {body_html}
   </td></tr>
 </table>
-\"\"\"
+"""
 
     # ---- 인사이트 & 액션 카드 내용 ----
     signals_list = build_signals(kpi, funnel_rate_df, traffic_df, search_df)
@@ -1049,7 +1047,7 @@ def compose_html_daily(
         f"<li style='margin-bottom:3px;'>{s}</li>" for s in actions_list
     )
 
-    insight_card_html = f\"\"\"
+    insight_card_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:14px;
               border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
@@ -1063,9 +1061,9 @@ def compose_html_daily(
     </ul>
   </td></tr>
 </table>
-\"\"\"
+"""
 
-    action_card_html = f\"\"\"
+    action_card_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:14px;
               border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
@@ -1079,9 +1077,9 @@ def compose_html_daily(
     </ul>
   </td></tr>
 </table>
-\"\"\"
+"""
 
-    insight_action_html = f\"\"\"
+    insight_action_html = f"""
 <!-- Insight & Action Cards -->
 <table width="100%" cellpadding="0" cellspacing="0"
        style="border-collapse:separate; border-spacing:8px 10px; margin-top:14px;">
@@ -1090,7 +1088,7 @@ def compose_html_daily(
     <td width="50%" valign="top">{action_card_html}</td>
   </tr>
 </table>
-\"\"\"
+"""
 
     # ---- 섹션2 카드 정의 ----
     funnel_counts_box = df_to_html_box(
@@ -1149,7 +1147,7 @@ def compose_html_daily(
 
     hourly_box = build_hourly_card(hourly_df)
 
-    section2_grid_html = f\"\"\"
+    section2_grid_html = f"""
 <div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:20px; margin-bottom:8px;">
   02 · FUNNEL · TRAFFIC · PRODUCT · SEARCH
 </div>
@@ -1174,10 +1172,10 @@ def compose_html_daily(
 <div>
   {hourly_box}
 </div>
-\"\"\"
+"""
 
     # ---- 본문 HTML ----
-    html = f\"\"\"<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
@@ -1490,7 +1488,7 @@ def compose_html_daily(
 
 </body>
 </html>
-\"\"\"
+"""
     return html
 
 
@@ -1547,7 +1545,7 @@ def send_daily_digest():
     if critical_reasons:
         body = " / ".join(critical_reasons)
         body += (
-            f"\\n\\n어제 기준 CVR {kpi['cvr_today']:.2f}%, "
+            f"\n\n어제 기준 CVR {kpi['cvr_today']:.2f}%, "
             f"매출 {format_money_manwon(kpi['revenue_today'])}, "
             f"UV {kpi['uv_today']:,}명."
         )
@@ -1583,10 +1581,3 @@ async def capture_digest():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(capture_digest())
-''')
-
-path = "/mnt/data/columbia_daily_digest_ld_organic.py"
-with open(path, "w", encoding="utf-8") as f:
-    f.write(code)
-
-path
