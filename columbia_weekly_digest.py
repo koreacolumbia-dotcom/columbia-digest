@@ -1315,7 +1315,7 @@ def compose_html_weekly(
     # Graph images
     kpi_img = make_kpi_change_chart(kpi)
     funnel_img = make_funnel_chart(funnel_compare_df)
-    search_img, search_stats = make_search_vs_nonsearch_chart(kpi, search_this)
+    channel_wow_img = make_channel_wow_chart(traffic_this, traffic_last)
 
     if search_stats["has_data"]:
         search_insight_line = (
