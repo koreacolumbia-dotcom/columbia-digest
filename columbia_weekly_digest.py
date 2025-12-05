@@ -1,1179 +1,758 @@
-# -*- coding: utf-8 -*-
-"""
-Columbia Sportswear Korea
-Weekly eCommerce Performance Digest (GA4 + HTML Mail + Charts)
-
-- GA4 기준 KPI/채널/검색/퍼널 데이터를 '지난주 월~일' 기준으로 집계
-- 히트맵/트렌드/퍼널/검색 스캐터 그래프 생성 (PNG 파일 + 메일 본문 이미지 삽입)
-- 월요일 아침에 GitHub Actions로 실행하는 것을 전제로 설계
-
-작성자: Jonathan + ChatGPT Co-pilot
-"""
+# ============================================================================
+# COLUMBIA KOREA – WEEKLY DIGEST (PART 1)
+# Base setting / GA4 / Date logic / KPI engine
+# ============================================================================
 
 import os
-import io
-import base64
 import smtplib
-from datetime import datetime, timedelta
-
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+from datetime import datetime, timedelta
 
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
-    DateRange,
-    Dimension,
-    Metric,
-    RunReportRequest,
+    DateRange, Dimension, Metric, RunReportRequest
 )
 from google.oauth2 import service_account
 
 
 # ============================================================================
-# 0) 환경 변수 / 기본 설정
+# 0) ENV CONFIG
 # ============================================================================
 
-# GA4 Property
-# (GitHub Actions에 GA4_PROPERTY_ID가 비어 있으면 기본값 358593394 사용)
-GA4_PROPERTY_ID = os.getenv("GA4_PROPERTY_ID") or "358593394"
+GA4_PROPERTY_ID = os.getenv("GA4_PROPERTY_ID", "").strip()
 
-# 서비스 계정 (GitHub Secrets: GA4_SERVICE_ACCOUNT_JSON 사용 권장)
-SERVICE_ACCOUNT_JSON = os.getenv("GA4_SERVICE_ACCOUNT_JSON", "")
-
-if SERVICE_ACCOUNT_JSON:
-    SERVICE_ACCOUNT_FILE = "/tmp/ga4_service_account.json"
-    with open(SERVICE_ACCOUNT_FILE, "w", encoding="utf-8") as f:
-        f.write(SERVICE_ACCOUNT_JSON)
-else:
-    # 로컬 테스트용 백업 경로 (Colab 등)
-    SERVICE_ACCOUNT_FILE = os.getenv(
-        "GA4_SERVICE_ACCOUNT_FILE",
-        "/content/drive/MyDrive/ga_service_account.json",
-    )
-
-# 메일 발송 관련
-SMTP_PROVIDER = os.getenv("SMTP_PROVIDER", "gmail").lower()  # "gmail" or "outlook"
-SMTP_HOST = os.getenv("SMTP_HOST")  # 지정 안 하면 PROVIDER 기준으로 자동
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER")  # 예: "koreacolumbia@gmail.com"
-SMTP_PASS = os.getenv("SMTP_PASS")  # GitHub Secret: SMTP_PASS
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASS = os.getenv("SMTP_PASS")
 
-# 수신자 (없으면 DAILY_RECIPIENTS, 그것도 없으면 본인 메일 한 개)
 WEEKLY_RECIPIENTS = [
-    e.strip()
-    for e in os.getenv(
-        "WEEKLY_RECIPIENTS",
-        os.getenv("DAILY_RECIPIENTS", "hugh.kang@Columbia.com"),
-    ).split(",")
-    if e.strip()
+    x.strip()
+    for x in os.getenv("WEEKLY_RECIPIENTS", "hugh.kang@columbia.com").split(",")
+    if x.strip()
 ]
 
-# 그래프 저장 폴더 (PPT용)
-CHART_DIR = "charts"
+SERVICE_ACCOUNT_FILE = os.getenv(
+    "GA4_SERVICE_ACCOUNT_FILE",
+    "ga_service_account.json"
+)
 
 
 # ============================================================================
-# 1) 공통 유틸
+# 1) UTILITIES
 # ============================================================================
-
-def pct_change(curr, prev):
-    """(curr - prev)/prev * 100 (%). prev가 0이면 0."""
-    try:
-        prev = float(prev)
-        curr = float(curr)
-        if prev == 0:
-            return 0.0
-        return round((curr - prev) / prev * 100, 1)
-    except Exception:
-        return 0.0
-
 
 def safe_int(x):
     try:
         return int(float(x))
-    except Exception:
+    except:
         return 0
 
 
 def safe_float(x):
     try:
         return float(x)
-    except Exception:
+    except:
         return 0.0
 
 
-def format_money(won):
-    w = round(safe_float(won))
-    return f"{w:,}원"
+def pct(curr, prev):
+    if prev == 0:
+        return 0.0
+    try:
+        return round((curr - prev) / prev * 100, 1)
+    except:
+        return 0.0
 
 
-def format_money_manwon(won):
-    man = round(safe_float(won) / 10_000)
-    return f"{man:,}만원"
+def money(v):
+    return f"{int(round(safe_float(v))):,}원"
 
 
-def ensure_chart_dir():
-    os.makedirs(CHART_DIR, exist_ok=True)
-
-
-def fig_to_base64_and_file(fig, filename: str):
-    """
-    matplotlib Figure를 PNG 파일로 저장 + base64 string으로 변환해 리턴.
-    - charts/filename 으로 저장
-    - HTML <img src="data:image/png;base64,..."> 로 사용 가능
-    """
-    ensure_chart_dir()
-    filepath = os.path.join(CHART_DIR, filename)
-    fig.tight_layout()
-    fig.savefig(filepath, dpi=120, bbox_inches="tight")
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    b64 = base64.b64encode(buf.read()).decode("ascii")
-    return b64, filepath
+def money_m(v):
+    return f"{int(round(safe_float(v) / 10000)):,}만원"
 
 
 # ============================================================================
-# 2) GA4 Client & 공통 run_report
+# 2) GA4 CLIENT
 # ============================================================================
 
 def ga_client():
     if not GA4_PROPERTY_ID:
-        raise SystemExit("GA4_PROPERTY_ID가 비어 있습니다.")
+        raise SystemExit("GA4_PROPERTY_ID empty.")
     if not os.path.exists(SERVICE_ACCOUNT_FILE):
-        raise SystemExit(f"서비스 계정 파일을 찾을 수 없습니다: {SERVICE_ACCOUNT_FILE}")
-    creds = service_account.Credentials.from_service_account_file(
+        raise SystemExit(f"GA service account file missing: {SERVICE_ACCOUNT_FILE}")
+
+    cred = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/analytics.readonly"],
+        scopes=["https://www.googleapis.com/auth/analytics.readonly"]
     )
-    return BetaAnalyticsDataClient(credentials=creds)
+
+    return BetaAnalyticsDataClient(credentials=cred)
 
 
-def ga_run_report(dimensions, metrics, start_date, end_date, limit=None, order_bys=None):
+def ga_run(dimensions, metrics, start_date, end_date, limit=None):
     client = ga_client()
+
     req = RunReportRequest(
         property=f"properties/{GA4_PROPERTY_ID}",
         date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
         dimensions=[Dimension(name=d) for d in dimensions],
         metrics=[Metric(name=m) for m in metrics],
-        limit=limit if limit else 0,
-        order_bys=order_bys or [],
+        limit=limit or 0,
     )
-    resp = client.run_report(req)
-    headers = [h.name for h in resp.dimension_headers] + [
-        h.name for h in resp.metric_headers
-    ]
+
+    res = client.run_report(req)
+
+    headers = (
+        [h.name for h in res.dimension_headers] +
+        [h.name for h in res.metric_headers]
+    )
+
     rows = []
-    for r in resp.rows:
+    for r in res.rows:
         rows.append(
-            [*[d.value for d in r.dimension_values], *[m.value for m in r.metric_values]]
+            [d.value for d in r.dimension_values] +
+            [m.value for m in r.metric_values]
         )
+
     df = pd.DataFrame(rows, columns=headers)
+
     for c in df.columns:
         try:
             df[c] = pd.to_numeric(df[c])
-        except Exception:
+        except:
             pass
+
     return df
 
 
 # ============================================================================
-# 3) 날짜 범위 (지난주 / 비교주)
+# 3) DATE RANGES (WEEKLY FIXED)
 # ============================================================================
 
-def get_week_ranges():
+def build_week_ranges():
     """
-    월요일 아침 실행 기준:
-    - this_week: 직전주 월~일
-    - prev_week: 그 이전주 (W-1, WoW 비교용)
-    - ly_week:   전년 동일 주차 (YoY 비교용)
+    월요일 실행 기준
+
+    this : 직전주 Mon ~ Sun
+    ld   : 직전주 이전주 (W-1)
+    lw   : 그 이전주 (W-2)
+    ly   : 전년 동일 주차
     """
     today = datetime.now()
-    weekday = today.weekday()  # Monday=0
+    weekday = today.weekday()
 
-    # 직전주 월요일 ~ 일요일
-    this_mon = (today - timedelta(days=weekday + 7)).date()
+    this_mon = today - timedelta(days=weekday + 7)
+    this_mon = this_mon.date()
     this_sun = this_mon + timedelta(days=6)
 
-    # WoW 비교용: 그 이전주
-    prev_mon = this_mon - timedelta(days=7)
-    prev_sun = this_mon - timedelta(days=1)
+    ld_mon = this_mon - timedelta(days=7)
+    lw_mon = this_mon - timedelta(days=14)
 
-    # YoY 비교: 날짜 그대로 연도만 -1 (예외 시 365일 전)
     try:
         ly_mon = this_mon.replace(year=this_mon.year - 1)
-        ly_sun = this_sun.replace(year=this_sun.year - 1)
-    except ValueError:
+    except:
         ly_mon = this_mon - timedelta(days=365)
-        ly_sun = this_sun - timedelta(days=365)
 
-    def fmt(d):
+    def r(mon):
+        sun = mon + timedelta(days=6)
+        return mon.strftime("%Y-%m-%d"), sun.strftime("%Y-%m-%d")
+
+    def f(d):
         return d.strftime("%Y-%m-%d")
 
-    label = f"{fmt(this_mon)} ~ {fmt(this_sun)}"
+    label = f"{f(this_mon)} ~ {f(this_sun)}"
 
     return {
         "label": label,
-        "this": (fmt(this_mon), fmt(this_sun)),
-        "prev": (fmt(prev_mon), fmt(prev_sun)),
-        "ly": (fmt(ly_mon), fmt(ly_sun)),
+        "this": r(this_mon),
+        "ld": r(ld_mon),
+        "lw": r(lw_mon),
+        "ly": r(ly_mon),
     }
 
 
 # ============================================================================
-# 4) KPI / 채널 / 검색 / 퍼널 데이터 소스
+# 4) KPI SOURCE
 # ============================================================================
 
-def src_kpi_range(start_date_str: str, end_date_str: str):
-    """주간 합계 (dimension 없이 metric만)."""
-    df = ga_run_report(
+def src_kpi(start, end):
+    df = ga_run(
         dimensions=[],
         metrics=["sessions", "transactions", "purchaseRevenue", "newUsers"],
-        start_date=start_date_str,
-        end_date=end_date_str,
+        start_date=start,
+        end_date=end,
     )
+
     if df.empty:
-        return {
-            "sessions": 0,
-            "transactions": 0,
-            "purchaseRevenue": 0.0,
-            "newUsers": 0,
-        }
-    row = df.iloc[0]
-    return {
-        "sessions": safe_int(row["sessions"]),
-        "transactions": safe_int(row["transactions"]),
-        "purchaseRevenue": safe_float(row["purchaseRevenue"]),
-        "newUsers": safe_int(row["newUsers"]),
-    }
+        return dict(
+            sessions=0,
+            transactions=0,
+            purchaseRevenue=0,
+            newUsers=0,
+        )
+
+    r = df.iloc[0]
+
+    return dict(
+        sessions=safe_int(r["sessions"]),
+        transactions=safe_int(r["transactions"]),
+        purchaseRevenue=safe_float(r["purchaseRevenue"]),
+        newUsers=safe_int(r["newUsers"]),
+    )
 
 
-def src_channel_uv_range(start_date_str: str, end_date_str: str):
-    """주간 기준 채널별 세션."""
-    df = ga_run_report(
+def src_channel_uv(start, end):
+    df = ga_run(
         dimensions=["sessionDefaultChannelGroup"],
         metrics=["sessions"],
-        start_date=start_date_str,
-        end_date=end_date_str,
+        start_date=start,
+        end_date=end,
     )
+
     if df.empty:
-        return {
-            "total_uv": 0,
-            "organic_uv": 0,
-            "nonorganic_uv": 0,
-            "organic_share": 0.0,
-        }
+        return dict(
+            total_uv=0,
+            organic_uv=0,
+            nonorganic_uv=0,
+            organic_share=0
+        )
 
-    df = df.copy()
-    df["sessions"] = pd.to_numeric(df["sessions"], errors="coerce").fillna(0).astype(int)
-    total_uv = int(df["sessions"].sum())
+    df["sessions"] = pd.to_numeric(df["sessions"]).fillna(0).astype(int)
 
-    organic_uv = int(
+    total = int(df["sessions"].sum())
+    organic = int(
         df.loc[df["sessionDefaultChannelGroup"] == "Organic Search", "sessions"].sum()
     )
-    nonorganic_uv = total_uv - organic_uv
-    organic_share = (organic_uv / total_uv * 100) if total_uv > 0 else 0.0
+    nonorganic = total - organic
+    share = round((organic / total) * 100, 1) if total > 0 else 0
 
-    return {
-        "total_uv": total_uv,
-        "organic_uv": organic_uv,
-        "nonorganic_uv": nonorganic_uv,
-        "organic_share": round(organic_share, 1),
-    }
-
-
-def build_weekly_kpi():
-    """
-    이번주 KPI + 지난주/전년동주 비교.
-    - this: 지난주
-    - prev: 지난주 이전
-    - ly  : 전년 동일주
-    """
-    ranges = get_week_ranges()
-    (this_start, this_end) = ranges["this"]
-    (prev_start, prev_end) = ranges["prev"]
-    (ly_start, ly_end) = ranges["ly"]
-
-    kpi_this = src_kpi_range(this_start, this_end)
-    kpi_prev = src_kpi_range(prev_start, prev_end)
-    kpi_yoy = src_kpi_range(ly_start, ly_end)
-
-    rev_this = kpi_this["purchaseRevenue"]
-    rev_prev = kpi_prev["purchaseRevenue"]
-    rev_yoy = kpi_yoy["purchaseRevenue"]
-
-    uv_this = kpi_this["sessions"]
-    uv_prev = kpi_prev["sessions"]
-    uv_yoy = kpi_yoy["sessions"]
-
-    ord_this = kpi_this["transactions"]
-    ord_prev = kpi_prev["transactions"]
-    ord_yoy = kpi_yoy["transactions"]
-
-    new_this = kpi_this["newUsers"]
-    new_prev = kpi_prev["newUsers"]
-    new_yoy = kpi_yoy["newUsers"]
-
-    cvr_this = (ord_this / uv_this * 100) if uv_this else 0.0
-    cvr_prev = (ord_prev / uv_prev * 100) if uv_prev else 0.0
-    cvr_yoy = (ord_yoy / uv_yoy * 100) if uv_yoy else 0.0
-
-    aov_this = (rev_this / ord_this) if ord_this else 0.0
-    aov_prev = (rev_prev / ord_prev) if ord_prev else 0.0
-    aov_yoy = (rev_yoy / ord_yoy) if ord_yoy else 0.0
-
-    ch_this = src_channel_uv_range(this_start, this_end)
-    ch_prev = src_channel_uv_range(prev_start, prev_end)
-    ch_yoy = src_channel_uv_range(ly_start, ly_end)
-
-    organic_uv_this = ch_this["organic_uv"]
-    organic_uv_prev = ch_prev["organic_uv"]
-    organic_uv_yoy = ch_yoy["organic_uv"]
-
-    nonorganic_uv_this = ch_this["nonorganic_uv"]
-    nonorganic_uv_prev = ch_prev["nonorganic_uv"]
-    nonorganic_uv_yoy = ch_yoy["nonorganic_uv"]
-
-    organic_share_this = ch_this["organic_share"]
-    organic_share_prev = ch_prev["organic_share"]
-    organic_share_yoy = ch_yoy["organic_share"]
-
-    return {
-        "date_label": ranges["label"],
-
-        # 매출
-        "revenue_this": rev_this,
-        "revenue_prev": rev_prev,
-        "revenue_yoy": rev_yoy,
-        "revenue_wow_pct": pct_change(rev_this, rev_prev),
-        "revenue_yoy_pct": pct_change(rev_this, rev_yoy),
-
-        # UV
-        "uv_this": uv_this,
-        "uv_prev": uv_prev,
-        "uv_yoy": uv_yoy,
-        "uv_wow_pct": pct_change(uv_this, uv_prev),
-        "uv_yoy_pct": pct_change(uv_this, uv_yoy),
-
-        # 주문수
-        "orders_this": ord_this,
-        "orders_prev": ord_prev,
-        "orders_yoy": ord_yoy,
-        "orders_wow_pct": pct_change(ord_this, ord_prev),
-        "orders_yoy_pct": pct_change(ord_this, ord_yoy),
-
-        # CVR
-        "cvr_this": round(cvr_this, 2),
-        "cvr_prev": round(cvr_prev, 2),
-        "cvr_yoy": round(cvr_yoy, 2),
-        "cvr_wow_pct": pct_change(cvr_this, cvr_prev),
-        "cvr_yoy_pct": pct_change(cvr_this, cvr_yoy),
-
-        # AOV
-        "aov_this": aov_this,
-        "aov_prev": aov_prev,
-        "aov_yoy": aov_yoy,
-        "aov_wow_pct": pct_change(aov_this, aov_prev),
-        "aov_yoy_pct": pct_change(aov_this, aov_yoy),
-
-        # 신규 방문자
-        "new_this": new_this,
-        "new_prev": new_prev,
-        "new_yoy": new_yoy,
-        "new_wow_pct": pct_change(new_this, new_prev),
-        "new_yoy_pct": pct_change(new_this, new_yoy),
-
-        # 오가닉 / 비오가닉
-        "organic_uv_this": organic_uv_this,
-        "organic_uv_prev": organic_uv_prev,
-        "organic_uv_yoy": organic_uv_yoy,
-        "organic_uv_wow_pct": pct_change(organic_uv_this, organic_uv_prev),
-        "organic_uv_yoy_pct": pct_change(organic_uv_this, organic_uv_yoy),
-
-        "nonorganic_uv_this": nonorganic_uv_this,
-        "nonorganic_uv_prev": nonorganic_uv_prev,
-        "nonorganic_uv_yoy": nonorganic_uv_yoy,
-        "nonorganic_uv_wow_pct": pct_change(nonorganic_uv_this, nonorganic_uv_prev),
-        "nonorganic_uv_yoy_pct": pct_change(nonorganic_uv_this, nonorganic_uv_yoy),
-
-        "organic_share_this": organic_share_this,
-        "organic_share_prev": organic_share_prev,
-        "organic_share_yoy": organic_share_yoy,
-        "organic_share_wow_pct": pct_change(organic_share_this, organic_share_prev),
-        "organic_share_yoy_pct": pct_change(organic_share_this, organic_share_yoy),
-    }
-
-
-def src_daily_trend_last_4_weeks():
-    """
-    최근 4주(28일) 기준 일별 매출/UV/CVR 트렌드 데이터.
-    Weekly 메일에는 '지난주 7일'만 그래프로 표시하되,
-    회귀선은 4주 데이터 기반으로 그려도 된다.
-    """
-    end = datetime.now().date() - timedelta(days=1)
-    start = end - timedelta(days=27)
-    df = ga_run_report(
-        dimensions=["date"],
-        metrics=["sessions", "transactions", "purchaseRevenue"],
-        start_date=start.strftime("%Y-%m-%d"),
-        end_date=end.strftime("%Y-%m-%d"),
-    )
-    if df.empty:
-        return pd.DataFrame()
-    df["date"] = pd.to_datetime(df["date"])
-    df["cvr"] = np.where(
-        df["sessions"] > 0, df["transactions"] / df["sessions"] * 100, 0.0
-    )
-    return df.sort_values("date")
-
-
-def src_channel_heatmap_data():
-    """
-    최근 4주 기준 요일 × 채널 히트맵용 데이터 (CVR).
-    """
-    end = datetime.now().date() - timedelta(days=1)
-    start = end - timedelta(days=27)
-    df = ga_run_report(
-        dimensions=["date", "sessionDefaultChannelGroup"],
-        metrics=["sessions", "transactions"],
-        start_date=start.strftime("%Y-%m-%d"),
-        end_date=end.strftime("%Y-%m-%d"),
-    )
-    if df.empty:
-        return pd.DataFrame()
-
-    df["date"] = pd.to_datetime(df["date"])
-    df["weekday"] = df["date"].dt.day_name()  # Monday, ...
-    df["cvr"] = np.where(
-        df["sessions"] > 0, df["transactions"] / df["sessions"] * 100, 0.0
+    return dict(
+        total_uv=total,
+        organic_uv=organic,
+        nonorganic_uv=nonorganic,
+        organic_share=share
     )
 
-    pivot = (
-        df.groupby(["weekday", "sessionDefaultChannelGroup"])["cvr"]
-        .mean()
-        .reset_index()
-    )
-    # 요일 순서 정렬
-    order = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
-    ]
-    pivot["weekday"] = pd.Categorical(pivot["weekday"], categories=order, ordered=True)
-    pivot = pivot.sort_values(["weekday", "sessionDefaultChannelGroup"])
-    heat = pivot.pivot(
-        index="sessionDefaultChannelGroup", columns="weekday", values="cvr"
-    )
-    return heat
 
+def build_kpi_pack():
 
-def src_search_performance(last_days=28):
-    """
-    최근 N일 검색어 효율성 데이터.
-    """
-    end = datetime.now().date() - timedelta(days=1)
-    start = end - timedelta(days=last_days - 1)
-    df = ga_run_report(
-        dimensions=["searchTerm"],
-        metrics=["eventCount", "transactions", "purchaseRevenue"],
-        start_date=start.strftime("%Y-%m-%d"),
-        end_date=end.strftime("%Y-%m-%d"),
-        limit=500,
-    )
-    if df.empty:
-        return pd.DataFrame(columns=["키워드", "검색수", "구매수", "CVR", "매출"])
-    df.rename(
-        columns={
-            "searchTerm": "키워드",
-            "eventCount": "검색수",
-            "transactions": "구매수",
-            "purchaseRevenue": "매출",
+    ranges = build_week_ranges()
+
+    k_this = src_kpi(*ranges["this"])
+    k_ld   = src_kpi(*ranges["ld"])
+    k_lw   = src_kpi(*ranges["lw"])
+    k_ly   = src_kpi(*ranges["ly"])
+
+    ch_this = src_channel_uv(*ranges["this"])
+    ch_ld   = src_channel_uv(*ranges["ld"])
+    ch_lw   = src_channel_uv(*ranges["lw"])
+    ch_ly   = src_channel_uv(*ranges["ly"])
+
+    def cvr(k):
+        return round((k["transactions"] / k["sessions"] * 100), 2) if k["sessions"] else 0
+
+    def aov(k):
+        return round(k["purchaseRevenue"] / k["transactions"], 0) if k["transactions"] else 0
+
+    pack = {
+
+        "range_label": ranges["label"],
+
+        "revenue": {
+            "today": k_this["purchaseRevenue"],
+            "ld": k_ld["purchaseRevenue"],
+            "lw": k_lw["purchaseRevenue"],
+            "ly": k_ly["purchaseRevenue"],
         },
-        inplace=True,
+
+        "uv": {
+            "today": k_this["sessions"],
+            "ld": k_ld["sessions"],
+            "lw": k_lw["sessions"],
+            "ly": k_ly["sessions"],
+        },
+
+        "orders": {
+            "today": k_this["transactions"],
+            "ld": k_ld["transactions"],
+            "lw": k_lw["transactions"],
+            "ly": k_ly["transactions"],
+        },
+
+        "new": {
+            "today": k_this["newUsers"],
+            "ld": k_ld["newUsers"],
+            "lw": k_lw["newUsers"],
+            "ly": k_ly["newUsers"],
+        },
+
+        "cvr": {
+            "today": cvr(k_this),
+            "ld": cvr(k_ld),
+            "lw": cvr(k_lw),
+            "ly": cvr(k_ly),
+        },
+
+        "aov": {
+            "today": aov(k_this),
+            "ld": aov(k_ld),
+            "lw": aov(k_lw),
+            "ly": aov(k_ly),
+        },
+
+        "organic_uv": {
+            "today": ch_this["organic_uv"],
+            "ld": ch_ld["organic_uv"],
+            "lw": ch_lw["organic_uv"],
+            "ly": ch_ly["organic_uv"],
+        },
+
+        "nonorganic_uv": {
+            "today": ch_this["nonorganic_uv"],
+            "ld": ch_ld["nonorganic_uv"],
+            "lw": ch_lw["nonorganic_uv"],
+            "ly": ch_ly["nonorganic_uv"],
+        },
+
+        "organic_share": {
+            "today": ch_this["organic_share"],
+            "ld": ch_ld["organic_share"],
+            "lw": ch_lw["organic_share"],
+            "ly": ch_ly["organic_share"],
+        }
+
+    }
+
+    return pack
+
+# ============================================================================
+# COLUMBIA KOREA – WEEKLY DIGEST (PART 2)
+# Insight Engine & Action Generator
+# ============================================================================
+
+# ============================================================================
+# 5) INSIGHT TEXT GENERATOR
+# ============================================================================
+
+def build_4step_insight(title, metric_name, today, prev):
+    """
+    WHAT → WHY → RISK → FOCUS 4단 자동 문장 생성
+    """
+    delta_pct = pct(today, prev)
+
+    # WHAT
+    what = (
+        f"{title}는 전주 대비 {delta_pct:+.1f}% "
+        f"{'상승' if delta_pct >= 0 else '감소'}했습니다."
     )
-    df["검색수"] = pd.to_numeric(df["검색수"], errors="coerce").fillna(0).astype(int)
-    df["구매수"] = pd.to_numeric(df["구매수"], errors="coerce").fillna(0).astype(int)
-    df["매출"] = pd.to_numeric(df["매출"], errors="coerce").fillna(0.0)
-    df["CVR"] = np.where(
-        df["검색수"] > 0, df["구매수"] / df["검색수"] * 100, 0.0
-    )
-    return df.sort_values("검색수", ascending=False)
 
-
-def src_funnel_last_week():
-    """
-    지난주 기준 view_item → add_to_cart → begin_checkout → purchase 퍼널 요약.
-    GA4에서 이벤트 이름을 영어 기준으로 사용한다고 가정.
-    """
-    ranges = get_week_ranges()
-    (s, e) = ranges["this"]
-
-    df = ga_run_report(
-        dimensions=["eventName"],
-        metrics=["eventCount"],
-        start_date=s,
-        end_date=e,
-    )
-    if df.empty:
-        return pd.DataFrame()
-
-    df = df.copy()
-    df["eventCount"] = pd.to_numeric(df["eventCount"], errors="coerce").fillna(0).astype(int)
-
-    steps = ["view_item", "add_to_cart", "begin_checkout", "purchase"]
-    data = []
-    base = None
-    for ev in steps:
-        cnt = int(df.loc[df["eventName"] == ev, "eventCount"].sum())
-        if base is None:
-            base = cnt or 1
-        rate = cnt / base * 100 if base > 0 else 0.0
-        data.append({"event": ev, "count": cnt, "step_cvr": rate})
-
-    return pd.DataFrame(data)
-
-
-def src_price_band_matrix():
-    """
-    가격대 × 신규/재구매 히트맵용.
-    - GA4 eCommerce items 기준 itemRevenue / itemsPurchased 로 단가 계산
-    - dimension: itemName, newVsReturning
-    - 다만 사이트 스키마에 따라 안 맞을 수 있으므로, 데이터 없으면 빈 DF 리턴.
-    """
-    end = datetime.now().date() - timedelta(days=1)
-    start = end - timedelta(days=27)
-
-    try:
-        df = ga_run_report(
-            dimensions=["itemName", "newVsReturning"],
-            metrics=["itemRevenue", "itemsPurchased"],
-            start_date=start.strftime("%Y-%m-%d"),
-            end_date=end.strftime("%Y-%m-%d"),
-            limit=2000,
+    # WHY
+    if metric_name == "revenue":
+        why = (
+            "이는 전환율과 객단가 복합 변화에 의해 매출 구조가 재편된 결과로,"
+            " 단순 유입 증가보다는 효율 개선이 주요 원인으로 해석됩니다."
         )
-    except Exception:
-        return pd.DataFrame()
-
-    if df.empty:
-        return pd.DataFrame()
-
-    df["itemRevenue"] = pd.to_numeric(df["itemRevenue"], errors="coerce").fillna(0.0)
-    df["itemsPurchased"] = pd.to_numeric(df["itemsPurchased"], errors="coerce").fillna(0)
-
-    df = df[df["itemsPurchased"] > 0].copy()
-    if df.empty:
-        return pd.DataFrame()
-
-    df["unit_price"] = df["itemRevenue"] / df["itemsPurchased"]
-
-    bins = [0, 50000, 100000, 200000, np.inf]
-    labels = ["~5만원", "5-10만원", "10-20만원", "20만원 이상"]
-    df["price_band"] = pd.cut(df["unit_price"], bins=bins, labels=labels, right=False)
-
-    pivot = (
-        df.groupby(["price_band", "newVsReturning"])["itemsPurchased"]
-        .sum()
-        .reset_index()
-    )
-    heat = pivot.pivot(
-        index="price_band", columns="newVsReturning", values="itemsPurchased"
-    )
-    return heat
-
-
-# ============================================================================
-# 5) 시각화 (그래프 → base64 + 파일 저장)
-# ============================================================================
-
-def plot_daily_trend(df: pd.DataFrame):
-    """지난 4주 일자별 매출/UV + 지난주 영역 강조 + 회귀선."""
-    if df.empty:
-        return None, None
-
-    fig, ax1 = plt.subplots(figsize=(7, 3))
-
-    df = df.copy()
-    df = df.sort_values("date")
-
-    # 매출 (왼쪽 Y축)
-    ax1.plot(df["date"], df["purchaseRevenue"], marker="o", linewidth=1)
-    ax1.set_ylabel("Revenue")
-    ax1.set_xticklabels(df["date"].dt.strftime("%m-%d"), rotation=45, ha="right")
-
-    # 회귀선 (매출 기준)
-    x = np.arange(len(df))
-    y = df["purchaseRevenue"].values
-    if len(df) > 1 and y.sum() > 0:
-        coef = np.polyfit(x, y, 1)
-        trend = np.poly1d(coef)(x)
-        ax1.plot(df["date"], trend, linestyle="--")
-
-    ax2 = ax1.twinx()
-    ax2.plot(df["date"], df["cvr"], marker="s", linewidth=1)
-    ax2.set_ylabel("CVR(%)")
-
-    ax1.set_title("Last 4 Weeks — Daily Revenue & CVR")
-    fig.autofmt_xdate()
-
-    return fig_to_base64_and_file(fig, "daily_trend.png")
-
-
-def plot_channel_heatmap(heat_df: pd.DataFrame):
-    if heat_df is None or heat_df.empty:
-        return None, None
-    fig, ax = plt.subplots(figsize=(6, 3.5))
-    sns.heatmap(heat_df, annot=True, fmt=".1f", cmap="Blues", ax=ax)
-    ax.set_title("Channel × Weekday CVR Heatmap (Last 4 Weeks)")
-    ax.set_xlabel("Weekday")
-    ax.set_ylabel("Channel Group")
-    return fig_to_base64_and_file(fig, "channel_heatmap.png")
-
-
-def plot_search_scatter(df: pd.DataFrame):
-    if df is None or df.empty:
-        return None, None
-    # 상위 검색수 100개만
-    df = df.head(100).copy()
-    fig, ax = plt.subplots(figsize=(6, 3.5))
-    sc = ax.scatter(df["검색수"], df["CVR"], s=(df["매출"] / 100000) + 10, alpha=0.7)
-    ax.set_xlabel("Search Volume")
-    ax.set_ylabel("CVR(%)")
-    ax.set_title("Search Term Efficiency (Last 28 Days)")
-    return fig_to_base64_and_file(fig, "search_scatter.png")
-
-
-def plot_funnel(df: pd.DataFrame):
-    if df is None or df.empty:
-        return None, None
-    fig, ax1 = plt.subplots(figsize=(6, 3))
-    steps = df["event"]
-    counts = df["count"]
-    cvr = df["step_cvr"]
-
-    ax1.bar(steps, counts)
-    ax1.set_ylabel("Event Count")
-    ax1.set_xlabel("Funnel Step")
-    ax1.set_title("Onsite Funnel (Last Week)")
-
-    ax2 = ax1.twinx()
-    ax2.plot(steps, cvr, marker="o", linestyle="--")
-    ax2.set_ylabel("Step CVR vs view_item (%)")
-
-    return fig_to_base64_and_file(fig, "funnel.png")
-
-
-def plot_price_band_heatmap(heat_df: pd.DataFrame):
-    if heat_df is None or heat_df.empty:
-        return None, None
-    fig, ax = plt.subplots(figsize=(5, 3))
-    sns.heatmap(heat_df, annot=True, fmt=".0f", cmap="Purples", ax=ax)
-    ax.set_title("Price Band × New vs Returning (Last 4 Weeks)")
-    ax.set_xlabel("New vs Returning")
-    ax.set_ylabel("Price Band")
-    return fig_to_base64_and_file(fig, "price_band_heatmap.png")
-
-
-# ============================================================================
-# 6) 인사이트/액션 텍스트 생성
-# ============================================================================
-
-def build_insights(kpi, funnel_df, search_df):
-    insights = []
-
-    # 매출/UV/CVR
-    if kpi["revenue_wow_pct"] > 0 and kpi["cvr_wow_pct"] > 0:
-        insights.append(
-            f"지난주 매출은 전주 대비 {kpi['revenue_wow_pct']:+.1f}% 증가했고, CVR은 {kpi['cvr_wow_pct']:+.1f}p 개선되었습니다."
+    elif metric_name == "cvr":
+        why = (
+            "유입 대비 구매 연결력이 달라지면서 퍼널 효율이 직접적으로 변화한 상황입니다."
         )
-    elif kpi["revenue_wow_pct"] < 0 and kpi["uv_wow_pct"] < 0:
-        insights.append(
-            f"지난주 매출({kpi['revenue_wow_pct']:+.1f}%)과 UV({kpi['uv_wow_pct']:+.1f}%)가 함께 감소해 상단 퍼널 유입 점검이 필요합니다."
+    elif metric_name == "uv":
+        why = (
+            "채널 믹스 및 광고 집행 영향으로 유입 볼륨 구조가 조정된 결과로 보입니다."
+        )
+    elif metric_name == "aov":
+        why = (
+            "단가대 높은 SKU 노출 확대로 주문 평균 금액 구성이 변화했습니다."
         )
     else:
-        insights.append(
-            f"지난주 매출 {kpi['revenue_wow_pct']:+.1f}%, UV {kpi['uv_wow_pct']:+.1f}%, CVR {kpi['cvr_wow_pct']:+.1f}p 변동을 보였습니다."
+        why = (
+            "기타 KPI 흐름과 함께 복합적으로 상호 작용하며 결과가 나타났습니다."
         )
 
-    # 퍼널
-    if funnel_df is not None and not funnel_df.empty:
-        worst = funnel_df.sort_values("step_cvr").iloc[0]
-        insights.append(
-            f"view_item 대비 전환율이 가장 낮은 단계는 '{worst['event']}' 구간으로, 전체 대비 {worst['step_cvr']:.1f}% 수준입니다."
+    # RISK or OPPORTUNITY
+    if delta_pct >= 5:
+        risk = (
+            "단기 급등 구간으로 판단되며, "
+            "일시적 프로모션 효과 또는 일회성 수요 반영 가능성이 있습니다."
         )
-
-    # 검색
-    if search_df is not None and not search_df.empty:
-        low = search_df[search_df["CVR"] < 1.0]
-        if not low.empty:
-            top_bad = ", ".join(low.head(2)["키워드"].tolist())
-            insights.append(
-                f"CVR 1% 미만 저효율 검색어는 {top_bad} 등이 있어 노출 상품/필터 재구성이 필요합니다."
-            )
-        else:
-            top_good = ", ".join(search_df.head(3)["키워드"].tolist())
-            insights.append(
-                f"검색 전환 상위 키워드는 {top_good} 등으로, 관련 카테고리/기획전 확장 여지가 있습니다."
-            )
-
-    # 오가닉/비오가닉
-    if kpi["organic_share_wow_pct"] < 0:
-        insights.append(
-            f"오가닉 UV 비중은 전주 대비 {kpi['organic_share_wow_pct']:+.1f}p 하락해 유료 채널 의존도가 높아졌습니다."
+    elif delta_pct <= -5:
+        risk = (
+            "감소폭이 커 구조적 저하 구간 가능성이 존재하며 "
+            "채널·퍼널 상세 점검이 필요한 상황입니다."
         )
     else:
-        insights.append(
-            f"오가닉 UV 비중은 {kpi['organic_share_this']:.1f}%로 유지 또는 개선되는 추세입니다."
+        risk = (
+            "완만한 변동 구간으로, "
+            "추세인지 노이즈인지는 추가 관찰이 필요합니다."
         )
 
-    return insights[:4]
+    # FOCUS
+    if metric_name == "revenue":
+        focus = (
+            "전환율 유지와 고단가 상품 노출 확장을 동시에 병행해 "
+            "수익 구조 안정화에 집중해야 합니다."
+        )
+    elif metric_name == "cvr":
+        focus = (
+            "Checkout 단계 UX·혜택 체감 요소 개선 테스트를 "
+            "단기 집중 과제로 설정합니다."
+        )
+    elif metric_name == "uv":
+        focus = (
+            "Paid/Organic 채널 유입 확대 실험을 통해 "
+            "상단 퍼널 볼륨 복원을 시도합니다."
+        )
+    elif metric_name == "aov":
+        focus = (
+            "프리미엄 SKU 및 세트 프로모션 강화로 "
+            "평균 객단가 상승 흐름을 유지합니다."
+        )
+    else:
+        focus = (
+            "관련 KPI 이동 원인 규명을 위한 세부 지표 분석을 병행합니다."
+        )
+
+    return {
+        "title": title,
+        "what": what,
+        "why": why,
+        "risk": risk,
+        "focus": focus,
+    }
 
 
-def build_actions(kpi, funnel_df, search_df):
+def build_weekly_insight_blocks(kpi_pack):
+    """
+    KPI 주요 항목 4개 기준 인사이트 생성:
+     - Revenue
+     - UV
+     - CVR
+     - AOV
+    """
+
+    insight_blocks = []
+
+    insight_blocks.append(
+        build_4step_insight(
+            "Revenue",
+            "revenue",
+            kpi_pack["revenue"]["today"],
+            kpi_pack["revenue"]["lw"]
+        )
+    )
+
+    insight_blocks.append(
+        build_4step_insight(
+            "UV",
+            "uv",
+            kpi_pack["uv"]["today"],
+            kpi_pack["uv"]["lw"]
+        )
+    )
+
+    insight_blocks.append(
+        build_4step_insight(
+            "CVR",
+            "cvr",
+            kpi_pack["cvr"]["today"],
+            kpi_pack["cvr"]["lw"]
+        )
+    )
+
+    insight_blocks.append(
+        build_4step_insight(
+            "AOV",
+            "aov",
+            kpi_pack["aov"]["today"],
+            kpi_pack["aov"]["lw"]
+        )
+    )
+
+    return insight_blocks
+
+
+# ============================================================================
+# 6) ACTION GENERATOR
+# ============================================================================
+
+def build_action_list(kpi_pack):
+    """
+    KPI 9개 조합 기반 실행 액션 6~8개 자동 생성
+    """
+
     actions = []
 
-    # 상단 퍼널/예산
-    if kpi["revenue_wow_pct"] < 0 and kpi["uv_wow_pct"] < 0:
+    # Revenue
+    if kpi_pack["revenue"]["today"] < kpi_pack["revenue"]["lw"]:
         actions.append(
-            "신규 유입 캠페인(브랜디드/논브랜디드 검색, 메타 상단광고)의 입찰·소재·타게팅을 우선 점검합니다."
-        )
-    elif kpi["cvr_wow_pct"] < 0:
-        actions.append(
-            "장바구니/체크아웃 구간에서 UX·프로모션을 점검하고, 이탈 세그먼트 대상 리마인드 캠페인을 테스트합니다."
+            "매출 감소 구간으로, 주요 채널 예산 비중 재조정 및 "
+            "메인 기획전 상단 노출 강화 테스트 필요"
         )
     else:
         actions.append(
-            "성과가 좋은 채널/소재의 예산을 소폭 상향해 상승 구간을 더 밀어주는 테스트를 진행합니다."
+            "성과 우수 SKU 중심으로 메인 슬롯 노출 확대 및 "
+            "유사 SKU 세트화 구성 실험 진행"
         )
 
-    # 퍼널 액션
-    if funnel_df is not None and not funnel_df.empty:
-        worst = funnel_df.sort_values("step_cvr").iloc[0]
-        if worst["event"] == "add_to_cart":
-            actions.append("상품 상세 → 장바구니 구간의 가격·혜택·리뷰 노출을 강화해 장바구니 전환을 끌어올립니다.")
-        elif worst["event"] == "begin_checkout":
-            actions.append("장바구니 → 체크아웃 구간에서 배송비/쿠폰/옵션 선택을 단순화하는 개선안을 검토합니다.")
-        elif worst["event"] == "purchase":
-            actions.append("체크아웃 → 결제 완료 구간에서 결제수단 오류, 인증 실패, 쿠폰 적용 이슈를 점검합니다.")
+    # UV
+    if kpi_pack["uv"]["today"] < kpi_pack["uv"]["lw"]:
+        actions.append(
+            "유입 하락 대응을 위해 Paid Search·Display 입찰 확대 및 "
+            "콘텐츠 유입용 SEO Landing 보강"
+        )
+    else:
+        actions.append(
+            "효율 유지 채널 중심으로 타겟 확장 실험 진행"
+        )
 
-    # 검색 액션
-    if search_df is not None and not search_df.empty:
-        low = search_df[search_df["CVR"] < 1.0]
-        if not low.empty:
-            actions.append(
-                "저전환 검색어에 연결된 상품·카테고리를 재구성하거나, 가격·할인 정책을 조정하는 안을 테스트합니다."
-            )
-        else:
-            actions.append(
-                "상위 검색어 기준으로 기획전/컬렉션 페이지를 추가 구성해 검색 → 구매 전환을 더 끌어올립니다."
-            )
+    # CVR
+    if kpi_pack["cvr"]["today"] < kpi_pack["cvr"]["lw"]:
+        actions.append(
+            "Checkout 단계 UX 점검 → 배송비 노출 위치/혜택 카피 A/B 테스트 시행"
+        )
+    else:
+        actions.append(
+            "전환 상위 랜딩 페이지 포맷을 타 기획전에 적용 테스트"
+        )
 
-    if not actions:
-        actions.append("성과가 좋은 채널/상품을 중심으로 소규모 예산 실험을 1~2개 설정해 다음 주에 결과를 확인합니다.")
+    # AOV
+    if kpi_pack["aov"]["today"] < kpi_pack["aov"]["lw"]:
+        actions.append(
+            "고단가 SKU 묶음 구성 및 추천 모듈 상단 배치 실험"
+        )
+    else:
+        actions.append(
+            "프리미엄 SKU 중심 메인 비중 상향 유지"
+        )
 
-    return actions[:4]
+    # Organic Share
+    if kpi_pack["organic_share"]["today"] < kpi_pack["organic_share"]["lw"]:
+        actions.append(
+            "콘텐츠형 기획전 및 리뷰 SEO 노출 강화 필요"
+        )
+    else:
+        actions.append(
+            "SEO 주요 키워드 랜딩 추가 제작"
+        )
 
+    # New Users
+    if kpi_pack["new"]["today"] < kpi_pack["new"]["lw"]:
+        actions.append(
+            "신규 가입 유도형 쿠폰 UX 및 광고 소재 메시지 재점검"
+        )
+    else:
+        actions.append(
+            "신규 가입 이벤트 유지 및 확장 테스트"
+        )
 
-# ============================================================================
-# 7) 메일 전송
-# ============================================================================
+    # Padding to at least 6
+    filler = [
+        "주간 테스트 항목 성과 Tagging 결과 취합",
+        "예산 효율 상위 캠페인 확장 편성",
+        "상품/채널 단위 성과 리포트 자동 추적"
+    ]
 
-def _smtp_server_and_port():
-    if SMTP_HOST:
-        return SMTP_HOST, SMTP_PORT
-    if SMTP_PROVIDER == "gmail":
-        return "smtp.gmail.com", 587
-    if SMTP_PROVIDER == "outlook":
-        return "smtp.office365.com", 587
-    return "smtp.gmail.com", 587
+    i = 0
+    while len(actions) < 8:
+        actions.append(filler[i % len(filler)])
+        i += 1
 
-
-def send_email_html(subject: str, html_body: str, recipients):
-    if isinstance(recipients, str):
-        recipients = [recipients]
-    if not recipients:
-        print("[WARN] 수신자가 없어 메일 발송 생략.")
-        return
-
-    if not (SMTP_USER and SMTP_PASS):
-        print("[WARN] SMTP_USER/SMTP_PASS 없음 – 아래는 HTML 미리보기입니다.\n")
-        print(html_body[:3000])
-        return
-
-    host, port = _smtp_server_and_port()
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = SMTP_USER
-    msg["To"] = ", ".join(recipients)
-
-    plain_text = "Columbia Weekly eCommerce Digest 입니다. 메일이 제대로 보이지 않으면 HTML 모드를 확인해주세요."
-    msg.attach(MIMEText(plain_text, "plain", "utf-8"))
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
-
-    with smtplib.SMTP(host, port) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.sendmail(SMTP_USER, recipients, msg.as_string())
-        print(f"[INFO] Weekly digest mail sent to: {', '.join(recipients)}")
-
+    return actions[:8]
 
 # ============================================================================
-# 8) HTML 템플릿 (KPI 9카드 + 그래프 + 인사이트/액션)
+# COLUMBIA KOREA – WEEKLY DIGEST (PART 3)
+# HTML Render + Email Sender + Main Runner
 # ============================================================================
 
-def compose_html_weekly(kpi, charts, insights, actions):
+# ============================================================================
+# 7) HTML COMPONENTS
+# ============================================================================
+
+def render_kpi_card(title, unit, block, is_percent=False):
     """
-    charts: dict 키 → base64 string (없으면 None)
-      - daily_trend
-      - channel_heatmap
-      - funnel
-      - price_band
-      - search_scatter
+    KPI 카드 1개 HTML
     """
-    # 인사이트/액션 HTML
-    insight_li = "".join(f"<li>{txt}</li>" for txt in insights)
-    action_li = "".join(f"<li>{txt}</li>" for txt in actions)
+    t = block["today"]
 
-    def img_block(b64, title):
-        if not b64:
-            return f"<p style='font-size:11px;color:#999;'>{title}: 데이터 없음</p>"
-        return f"""
-        <div style="margin-bottom:12px;">
-          <div style="font-size:11px;font-weight:600;margin-bottom:4px;">{title}</div>
-          <img src="data:image/png;base64,{b64}" style="max-width:100%;border-radius:8px;border:1px solid #e4e7f2;" />
+    def fmt(val):
+        if is_percent:
+            return f"{val:.2f}%" if isinstance(val, float) else f"{val}%"
+        return f"{val:,}{unit}"
+
+    def pct_span(v, base):
+        p = pct(v, base)
+        color = "#1b7f4d" if p >= 0 else "#c53030"
+        bg = "#e7f5ec" if p >= 0 else "#fdeaea"
+        sign = "+" if p >= 0 else ""
+        return (
+            f"<span style='background:{bg}; color:{color}; "
+            f"border-radius:999px;padding:2px 7px;font-size:10px;'>"
+            f"{sign}{p:.1f}%</span>"
+        )
+
+    row = f"""
+    <div style="border:1px solid #e1e7f5;border-radius:16px;
+                padding:14px 16px;height:150px;background:#fff;">
+        <div style="font-size:11px;color:#777">{title}</div>
+        <div style="font-size:20px;font-weight:700;margin:4px 0">
+            {fmt(t)}
         </div>
-        """
+        <div style="font-size:10px;color:#999;margin-bottom:4px">
+            LD {fmt(block['ld'])} · LW {fmt(block['lw'])} · LY {fmt(block['ly'])}
+        </div>
+        <div>
+            {pct_span(t, block['ld'])}
+            {pct_span(t, block['lw'])}
+            {pct_span(t, block['ly'])}
+        </div>
+    </div>
+    """
+    return row
 
-    html = f"""<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<title>Columbia Sportswear Korea — Weekly eCommerce Performance Digest</title>
-</head>
-<body style="margin:0; padding:0; background:#f5f7fb; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans KR',Arial,sans-serif;">
 
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;">
-  <tr>
-    <td align="center">
-      <table role="presentation" width="900" cellspacing="0" cellpadding="0" style="padding:24px 12px 24px 12px; background:#f5f7fb;">
-        <tr><td>
+def render_insight_block(block):
+    """
+    WHAT/WHY/RISK/FOCUS HTML
+    """
+    return f"""
+    <div style="border:1px solid #e1e7f5;padding:12px 14px;
+                border-radius:14px;background:#fff;margin-bottom:8px;">
+        <b>{block['title']}</b><br>
+        <b>WHAT</b> {block['what']}<br>
+        <b>WHY</b> {block['why']}<br>
+        <b>RISK</b> {block['risk']}<br>
+        <b>FOCUS</b> {block['focus']}
+    </div>
+    """
 
-          <!-- 헤더 -->
-          <table width="100%" cellspacing="0" cellpadding="0"
-                 style="background:#ffffff; border-radius:18px; border:1px solid #e6e9ef; box-shadow:0 6px 18px rgba(0,0,0,0.06);">
-            <tr>
-              <td style="padding:18px 20px 16px 20px;" valign="top">
-                <div style="font-size:18px; font-weight:700; color:#0055a5; margin-bottom:2px;">
-                  COLUMBIA SPORTSWEAR KOREA
-                </div>
-                <div style="font-size:13px; color:#555; margin-bottom:8px;">
-                  Weekly eCommerce Performance Digest
-                </div>
-                <span style="display:inline-block; font-size:11px; padding:4px 10px; border-radius:999px;
-                             background:#eaf3ff; color:#0055a5; margin-bottom:6px;">
-                  {kpi['date_label']} 기준 (지난주 데이터)
-                </span>
-                <div style="font-size:11px; color:#777; margin-top:6px; margin-bottom:2px; line-height:1.6;">
-                  지난 한 주간의 매출·UV·CVR 흐름과 채널/검색/퍼널 데이터를 PPT 없이 한 번에 볼 수 있도록 정리한 요약 메일입니다.
-                </div>
-              </td>
-              <td valign="top" align="right" style="padding:16px 20px 16px 0%;">
-                <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
-                             background:#0055a5; color:#ffffff; border:1px solid #0055a5; margin-left:4px;">
-                  WEEKLY
-                </span>
-                <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
-                             background:#fafbfd; color:#445; border:1px solid #dfe6f3; margin-left:4px;">
-                  KPI
-                </span>
-                <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
-                             background:#fafbfd; color:#445; border:1px solid #dfe6f3; margin-left:4px;">
-                  CHANNEL
-                </span>
-                <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
-                             background:#fafbfd; color:#445; border:1px solid #dfe6f3; margin-left:4px;">
-                  SEARCH & FUNNEL
-                </span>
-              </td>
-            </tr>
-          </table>
 
-          <!-- 01 KPI SNAPSHOT -->
-          <div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:18px; margin-bottom:10px;">
-            01 · WEEKLY KPI SNAPSHOT
-          </div>
+# ============================================================================
+# 8) MAIN HTML TEMPLATE
+# ============================================================================
 
-          <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate; border-spacing:8px 10px;">
-            <tr>
-              <!-- Revenue -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">매출 (Revenue)</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {format_money_manwon(kpi['revenue_this'])}
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['revenue_wow_pct']:+.1f}% · YoY: {kpi['revenue_yoy_pct']:+.1f}%
-                  </div>
-                  <div style="font-size:10px; color:#999;">
-                    전주: {format_money_manwon(kpi['revenue_prev'])} / 전년동주: {format_money_manwon(kpi['revenue_yoy'])}
-                  </div>
-                </div>
-              </td>
+def compose_weekly_html(kpi_pack):
 
-              <!-- UV -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">방문자수 (UV)</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {kpi['uv_this']:,}명
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['uv_wow_pct']:+.1f}% · YoY: {kpi['uv_yoy_pct']:+.1f}%
-                  </div>
-                  <div style="font-size:10px; color:#999;">
-                    전주: {kpi['uv_prev']:,} / 전년동주: {kpi['uv_yoy']:,}
-                  </div>
-                </div>
-              </td>
+    # --- INSIGHTS ---
+    insight_blocks = build_weekly_insight_blocks(kpi_pack)
+    ins_html = "".join(render_insight_block(b) for b in insight_blocks)
 
-              <!-- CVR -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">전환율 (CVR)</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {kpi['cvr_this']:.2f}%
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['cvr_wow_pct']:+.1f}p · YoY: {kpi['cvr_yoy_pct']:+.1f}p
-                  </div>
-                  <div style="font-size:10px; color:#999;">
-                    전주: {kpi['cvr_prev']:.2f}% / 전년동주: {kpi['cvr_yoy']:.2f}%
-                  </div>
-                </div>
-              </td>
-            </tr>
+    # --- ACTIONS ---
+    actions = build_action_list(kpi_pack)
+    act_html = "".join(f"<li style='margin-bottom:4px;'>{a}</li>" for a in actions)
 
-            <tr>
-              <!-- Orders -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">구매수 (Orders)</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {kpi['orders_this']:,}건
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['orders_wow_pct']:+.1f}% · YoY: {kpi['orders_yoy_pct']:+.1f}%
-                  </div>
-                  <div style="font-size:10px; color:#999;">
-                    전주: {kpi['orders_prev']:,} / 전년동주: {kpi['orders_yoy']:,}
-                  </div>
-                </div>
-              </td>
+    # --- KPI SNAPSHOT ---
+    cards_html = "".join([
+        render_kpi_card("매출", "원", kpi_pack["revenue"]),
+        render_kpi_card("UV", "명", kpi_pack["uv"]),
+        render_kpi_card("CVR", "", kpi_pack["cvr"], True),
 
-              <!-- AOV -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">객단가 (AOV)</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {format_money(kpi['aov_this'])}
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['aov_wow_pct']:+.1f}% · YoY: {kpi['aov_yoy_pct']:+.1f}%
-                  </div>
-                  <div style="font-size:10px; color:#999;">
-                    전주: {format_money(kpi['aov_prev'])} / 전년동주: {format_money(kpi['aov_yoy'])}
-                  </div>
-                </div>
-              </td>
+        render_kpi_card("구매수", "건", kpi_pack["orders"]),
+        render_kpi_card("AOV", "원", kpi_pack["aov"]),
+        render_kpi_card("신규", "명", kpi_pack["new"]),
 
-              <!-- New Visitors -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">신규 방문자 (New Visitors)</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {kpi['new_this']:,}명
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['new_wow_pct']:+.1f}% · YoY: {kpi['new_yoy_pct']:+.1f}%
-                  </div>
-                  <div style="font-size:10px; color:#999;">
-                    전주: {kpi['new_prev']:,} / 전년동주: {kpi['new_yoy']:,}
-                  </div>
-                </div>
-              </td>
-            </tr>
+        render_kpi_card("오가닉 UV", "명", kpi_pack["organic_uv"]),
+        render_kpi_card("비오가닉 UV", "명", kpi_pack["nonorganic_uv"]),
+        render_kpi_card("오가닉 비중", "%", kpi_pack["organic_share"], True),
+    ])
 
-            <tr>
-              <!-- Organic UV -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">오가닉 UV</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {kpi['organic_uv_this']:,}명
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['organic_uv_wow_pct']:+.1f}% · YoY: {kpi['organic_uv_yoy_pct']:+.1f}%
-                  </div>
-                </div>
-              </td>
+    body = f"""
+<html>
+<body style="background:#f5f7fb;font-family:Arial,sans-serif;">
 
-              <!-- Non-organic UV -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">비오가닉 UV</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {kpi['nonorganic_uv_this']:,}명
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['nonorganic_uv_wow_pct']:+.1f}% · YoY: {kpi['nonorganic_uv_yoy_pct']:+.1f}%
-                  </div>
-                </div>
-              </td>
+<h2>COLUMBIA WEEKLY ECOM DIGEST</h2>
+<div>{kpi_pack['range_label']}</div>
 
-              <!-- Organic Share -->
-              <td width="33%" valign="top">
-                <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-                  <div style="font-size:11px; color:#777; margin-bottom:4px;">오가닉 UV 비중</div>
-                  <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-                    {kpi['organic_share_this']:.1f}%
-                  </div>
-                  <div style="font-size:10px; color:#999; margin-bottom:4px;">
-                    WoW: {kpi['organic_share_wow_pct']:+.1f}p · YoY: {kpi['organic_share_yoy_pct']:+.1f}p
-                  </div>
-                </div>
-              </td>
-            </tr>
-          </table>
+<hr>
 
-          <!-- 02 인사이트 & 액션 -->
-          <div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:18px; margin-bottom:10px;">
-            02 · INSIGHTS & ACTIONS
-          </div>
+<h3>01 · INSIGHTS</h3>
+{ins_html}
 
-          <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate; border-spacing:8px 10px;">
-            <tr>
-              <td width="50%" valign="top">
-                <table width="100%" cellpadding="0" cellspacing="0"
-                       style="background:#ffffff; border-radius:14px; border:1px solid #e1e7f5; padding:10px 12px;">
-                  <tr><td>
-                    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:6px;">이번 주 핵심 인사이트</div>
-                    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
-                      {insight_li}
-                    </ul>
-                  </td></tr>
-                </table>
-              </td>
-              <td width="50%" valign="top">
-                <table width="100%" cellpadding="0" cellspacing="0"
-                       style="background:#ffffff; border-radius:14px; border:1px solid #e1e7f5; padding:10px 12px;">
-                  <tr><td>
-                    <div style="font-size:11px; font-weight:600; color:#0f766e; margin-bottom:6px;">다음 주 액션 포인트</div>
-                    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
-                      {action_li}
-                    </ul>
-                  </td></tr>
-                </table>
-              </td>
-            </tr>
-          </table>
+<h4>EXECUTION ACTIONS</h4>
+<ul style="font-size:12px;">
+{act_html}
+</ul>
 
-          <!-- 03 그래프 섹션 -->
-          <div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:18px; margin-bottom:10px;">
-            03 · VISUAL SUMMARY (TREND · CHANNEL · FUNNEL · SEARCH)
-          </div>
+<hr>
 
-          <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate; border-spacing:8px 10px;">
-            <tr>
-              <td width="50%" valign="top">
-                {img_block(charts.get('daily_trend'), 'Daily Revenue & CVR (Last 4 Weeks)')}
-                {img_block(charts.get('channel_heatmap'), 'Channel × Weekday CVR Heatmap (Last 4 Weeks)')}
-              </td>
-              <td width="50%" valign="top">
-                {img_block(charts.get('funnel'), 'Onsite Funnel (view_item → purchase, Last Week)')}
-                {img_block(charts.get('price_band'), 'Price Band × New vs Returning (Last 4 Weeks)')}
-                {img_block(charts.get('search_scatter'), 'Search Term Efficiency (Last 28 Days)')}
-              </td>
-            </tr>
-          </table>
+<h3>02 · WEEKLY KPI SNAPSHOT</h3>
 
-          <div style="margin-top:18px; font-size:10px; color:#99a; text-align:right;">
-            Columbia Sportswear Korea · Weekly eCommerce Digest · GA4 · Python Automation
-          </div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+{cards_html}
+</div>
 
-        </td></tr>
-      </table>
-    </td>
-  </tr>
-</table>
+<hr>
+
+<h3>03 · FUNNEL · TRAFFIC · PRODUCT · SEARCH</h3>
+<p style="font-size:13px;color:#666;">
+해당 섹션은 향후 Sankey / Heatmap / Search Funnel 등으로 시각화 예정입니다.
+</p>
+
+<hr>
+
+<h3>04 · VISUAL STORY (TEXT PREVIEW)</h3>
+{ins_html}
+
+<footer style="font-size:10px;color:#888;text-align:right;">
+Columbia Sportswear Korea – Automated Weekly Digest
+</footer>
 
 </body>
 </html>
 """
-    return html
+
+    return body
 
 
 # ============================================================================
-# 9) 메인 실행 함수
+# 9) EMAIL SENDER
 # ============================================================================
 
-def send_weekly_digest():
-    # 1) 데이터 수집
-    ranges = get_week_ranges()
-    (this_start, this_end) = ranges["this"]
-    print(f"[INFO] Weekly digest range: {this_start} ~ {this_end}")
+def send_weekly_mail(subject, html):
 
-    kpi = build_weekly_kpi()
-    daily_df = src_daily_trend_last_4_weeks()
-    ch_heat = src_channel_heatmap_data()
-    search_df = src_search_performance()
-    funnel_df = src_funnel_last_week()
-    price_heat = src_price_band_matrix()
+    if not SMTP_USER or not SMTP_PASS:
+        print("[WARN] SMTP 설정 없음. 메일 발송 대신 미리보기 출력:")
+        print(html[:2000])
+        return
 
-    # 2) 시각화 (각각 PNG + base64)
-    charts = {}
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_USER
+    msg["To"] = ", ".join(WEEKLY_RECIPIENTS)
 
-    fig_b64, _ = plot_daily_trend(daily_df)
-    charts["daily_trend"] = fig_b64
+    msg.attach(MIMEText(html, "html", "utf-8"))
 
-    fig_b64, _ = plot_channel_heatmap(ch_heat)
-    charts["channel_heatmap"] = fig_b64
+    server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+    server.starttls()
+    server.login(SMTP_USER, SMTP_PASS)
+    server.sendmail(SMTP_USER, WEEKLY_RECIPIENTS, msg.as_string())
+    server.quit()
 
-    fig_b64, _ = plot_funnel(funnel_df)
-    charts["funnel"] = fig_b64
-
-    fig_b64, _ = plot_price_band_heatmap(price_heat)
-    charts["price_band"] = fig_b64
-
-    fig_b64, _ = plot_search_scatter(search_df)
-    charts["search_scatter"] = fig_b64
-
-    # 3) 인사이트 & 액션 텍스트
-    insights = build_insights(kpi, funnel_df, search_df)
-    actions = build_actions(kpi, funnel_df, search_df)
-
-    # 4) HTML 메일 구성
-    html = compose_html_weekly(kpi, charts, insights, actions)
-
-    # 5) 발송
-    subject = f"[COLUMBIA] Weekly eCommerce Digest — {kpi['date_label']}"
-    send_email_html(subject, html, WEEKLY_RECIPIENTS)
+    print("[INFO] Weekly digest mail sent.")
 
 
 # ============================================================================
-# Entry point
+# 10) MAIN BLOCK
 # ============================================================================
+
+def run_weekly_digest():
+
+    print("[START] WEEKLY DIGEST")
+
+    kpi_pack = build_kpi_pack()
+
+    html = compose_weekly_html(kpi_pack)
+
+    subject = f"[COLUMBIA] Weekly Digest — {kpi_pack['range_label']}"
+
+    send_weekly_mail(subject, html)
+
+    print("[DONE] WEEKLY DIGEST")
+
 
 if __name__ == "__main__":
-    send_weekly_digest()
+    run_weekly_digest()
