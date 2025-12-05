@@ -1001,65 +1001,36 @@ def make_funnel_chart(funnel_compare_df: pd.DataFrame) -> str:
     return _fig_to_data_uri(fig)
 
 
-def make_search_vs_nonsearch_chart(kpi: Dict[str, float],
-                                   search_df: pd.DataFrame):
+def make_channel_wow_chart(traffic_this: pd.DataFrame,
+                           traffic_last: pd.DataFrame) -> str:
+    """매출 증감(%)이 큰 채널 TOP6를 그리는 그래프."""
     import matplotlib.pyplot as plt
 
-    total_sessions = float(kpi.get("uv_this", 0))
-    total_orders = float(kpi.get("orders_this", 0))
-
-    # 데이터 없으면 빈 그림 + 기본 stats 리턴
-    if search_df is None or search_df.empty or total_sessions == 0:
+    if (traffic_this is None or traffic_this.empty or
+        traffic_last is None or traffic_last.empty):
         fig, ax = plt.subplots(figsize=(4.5, 3))
-        ax.text(0.5, 0.5, "No search data", ha="center", va="center")
+        ax.text(0.5, 0.5, "No channel data", ha="center", va="center")
         ax.axis("off")
-        return _fig_to_data_uri(fig), {
-            "has_data": False,
-            "search_cvr": 0.0,
-            "non_cvr": 0.0,
-            "cvr_diff_ppt": 0.0,
-        }
+        return _fig_to_data_uri(fig)
 
-    # 검색 이벤트/구매 합계 (대략 세션/주문으로 사용)
-    search_sessions = float(search_df["검색수"].sum())
-    search_orders = float(search_df["구매수"].sum())
+    metric_cols = ["매출(만원)"]
+    merged = calc_wow_delta(traffic_this, traffic_last, "채널", metric_cols)
 
-    # 전체보다 크지 않게 방어
-    search_sessions = min(search_sessions, total_sessions)
-    search_orders = min(search_orders, total_orders)
+    # 매출 증감 절대값 기준 상위 6개 채널
+    merged["매출_chg_abs"] = merged["매출(만원)_chg_pct"].abs()
+    top = merged.sort_values("매출_chg_abs", ascending=False).head(6)
 
-    non_sessions = max(total_sessions - search_sessions, 0.0)
-    non_orders = max(total_orders - search_orders, 0.0)
-
-    search_cvr = search_orders / search_sessions if search_sessions > 0 else 0.0
-    non_cvr = non_orders / non_sessions if non_sessions > 0 else 0.0
-    cvr_diff_ppt = (search_cvr - non_cvr) * 100  # percentage point 차이
-
-    labels = ["Search Users", "Non-Search Users"]
-    values = [search_cvr * 100, non_cvr * 100]
+    labels = top["채널"].tolist()
+    vals = top["매출(만원)_chg_pct"].tolist()
 
     fig, ax = plt.subplots(figsize=(4.5, 3))
-    ax.bar(labels, values)
-    ax.set_ylabel("CVR %")
-    ax.set_title("Search Users vs Non-Search Users (CVR)")
-    ymax = max(values) * 1.3 if max(values) > 0 else 1
-    ax.set_ylim(0, ymax)
+    ax.bar(labels, vals)
+    ax.axhline(0, linewidth=0.8)
+    ax.set_ylabel("Revenue % vs LW")
+    ax.set_title("Top Channels by Revenue WoW Change")
+    ax.set_xticklabels(labels, rotation=20, ha="right")
 
-    for i, v in enumerate(values):
-        ax.text(i, v, f"{v:.2f}%", ha="center", va="bottom", fontsize=8)
-
-    img = _fig_to_data_uri(fig)
-
-    stats = {
-        "has_data": True,
-        "search_cvr": search_cvr,
-        "non_cvr": non_cvr,
-        "cvr_diff_ppt": cvr_diff_ppt,
-    }
-    return img, stats
-
-
-
+    return _fig_to_data_uri(fig)
 
 # =====================================================================
 # 8) GRAPH & ANALYSIS 요약 카드
