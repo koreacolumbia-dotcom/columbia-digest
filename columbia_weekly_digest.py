@@ -823,6 +823,49 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
 
         df2[col] = df2[col].apply(_fmt)
 
+        # =============================
+    # Search WoW 전용 하이라이트
+    # =============================
+    if "키워드" in df2.columns and "검색수 증감" in df2.columns:
+
+        def highlight_search_growth(row):
+            try:
+                diff = float(row["검색수 증감"])
+                rate = float(row.get("검색수 증감률(%)", 0))
+            except:
+                return row
+
+            # 초강력 성장 (메인 하이라이트)
+            if diff >= 30 or rate >= 80:
+                bg = "background:#fff7cc;"    # 연노랑
+                fw = "font-weight:700;"
+                icon = "🔥 "
+
+            # 일반 상승
+            elif diff >= 15:
+                bg = "background:#eaf2ff;"    # 연파랑
+                fw = "font-weight:600;"
+                icon = "▲ "
+
+            else:
+                bg = ""
+                fw = ""
+                icon = ""
+
+            # 키워드 강조
+            row["키워드"] = (
+                f'<span style="{fw}">'
+                f'{icon}{row["키워드"]}'
+                f'</span>'
+            )
+
+            # 증감 숫자 강조
+            row["검색수 증감"] = f'<span style="{fw}">{row["검색수 증감"]}</span>'
+
+            if "검색수 증감률(%)" in row:
+                row["검색수 증감률(%)"] = (
+
+
     # ----- 2) HTML 변환 (escape=False 꼭 유지) -----
     html = df2.to_html(index=False, border=0, justify="left", escape=False)
 
