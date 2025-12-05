@@ -1349,18 +1349,20 @@ def compose_html_weekly(
               padding:8px 10px; border-collapse:separate; min-height:260px;">
   <tr><td>
     <div style="font-size:11px; font-weight:600; color:#1e293b; margin-bottom:4px;">
-      Top Search Keywords by CVR
+      Search Users vs Non-Search Users
     </div>
     <img src="{search_img}" style="width:100%; max-width:100%; height:auto; border-radius:8px; margin-bottom:6px;" />
     <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
-      상위 검색 키워드의 CVR 수준을 막대 그래프로 보여줍니다. 전환이 특히 높은 키워드는 기획전·추천 영역·광고 확장에 우선 활용할 수 있습니다.
+      {search_insight_line}
     </p>
     <p style="margin:0; font-size:10px; color:#111; line-height:1.6;">
-      <b>Action:</b> CVR 상위 키워드를 전용 랜딩/배너로 강화하고, 하위 키워드는 검색 결과 구성·가격·혜택 메시지를 조정해 테스트합니다.
+      <b>Action:</b> 검색 세션에서 CVR이 더 높다면 검색 박스와 추천 키워드, 검색 결과 상단 추천 영역 노출을 강화하고,
+      반대로 차이가 없거나 낮다면 검색 UX·결과 정렬·필터 구성을 조정해 A/B 테스트를 진행합니다.
     </p>
   </td></tr>
 </table>
 """
+
 
     graph_summary_cards = build_graph_summary_cards(
         kpi, funnel_compare_df, mix_df, search_this
