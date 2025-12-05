@@ -827,7 +827,7 @@ def build_actions(kpi, funnel_rate_df, traffic_df, search_df):
     if traffic_df is not None and not traffic_df.empty:
         top = traffic_df.iloc[0]
         actions.append(
-            f"· {top['소스']} 채널의 성과 좋은 소재를 기준으로 유사 카피·이미지를 다른 채널에도 확장 테스트합니다."
+            f"{top['소스']} 채널의 성과 좋은 소재를 기준으로 유사 카피·이미지를 다른 채널에도 확장 테스트합니다."
         )
 
     # 4) 검색 액션
