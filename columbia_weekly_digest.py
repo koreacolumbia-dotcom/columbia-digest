@@ -431,6 +431,48 @@ def src_weekly_search(start_date: str, end_date: str, limit: int = 80) -> pd.Dat
     df = df.sort_values("검색수", ascending=False)
     return df
 
+def build_search_wow_table(search_this: pd.DataFrame,
+                           search_last: pd.DataFrame) -> pd.DataFrame:
+    """전주 대비 이번주 검색수가 증가한 키워드 정리."""
+
+    if (search_this is None or search_this.empty or
+        search_last is None or search_last.empty):
+        return pd.DataFrame(columns=[
+            "키워드", "검색수(THIS)", "검색수(LW)", "검색수 증감", "검색수 증감률(%)", "CVR(%)"
+        ])
+
+    t = search_this.copy()
+    l = search_last.copy()
+
+    t = t[["키워드", "검색수", "구매수", "CVR(%)"]]
+    l = l[["키워드", "검색수"]].rename(columns={"검색수": "검색수_LW"})
+
+    df = t.merge(l, on="키워드", how="left")
+    df["검색수_LW"] = df["검색수_LW"].fillna(0).astype(int)
+
+    df["검색수 증감"] = df["검색수"] - df["검색수_LW"]
+
+    def _pct(row):
+        base = row["검색수_LW"]
+        if base == 0:
+            return 0.0
+        return round((row["검색수"] - base) / base * 100, 1)
+
+    df["검색수 증감률(%)"] = df.apply(_pct, axis=1)
+
+    # 최소 검색수·증감 필터(너무 잡음인 애들 제거)
+    df = df[(df["검색수"] >= 10) & (df["검색수 증감"] > 0)]
+
+    df = df.sort_values(["검색수 증감", "검색수 증감률(%)"], ascending=False).head(20)
+
+    df = df.rename(columns={
+        "검색수": "검색수(THIS)",
+        "검색수_LW": "검색수(LW)"
+    })
+
+    return df[["키워드", "검색수(THIS)", "검색수(LW)", "검색수 증감", "검색수 증감률(%)", "CVR(%)"]]
+
+
 
 def build_channel_mix(df_this: pd.DataFrame, df_last: pd.DataFrame) -> pd.DataFrame:
     if df_this is None or df_this.empty:
