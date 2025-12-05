@@ -3,4 +3,5 @@ google-analytics-data
 google-auth
 pyppeteer
 nest-asyncio
+seaborn
 
