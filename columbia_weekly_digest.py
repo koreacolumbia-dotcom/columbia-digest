@@ -1262,12 +1262,12 @@ def compose_html_weekly(
               padding:8px 10px; border-collapse:separate; min-height:220px;">
   <tr><td>
     <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
-      Traffic by Channel (이번주)
+      Traffic by Channel (이번주 vs 전주)
     </div>
     <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
-      채널별 UV · 구매수 · 매출 · CVR · 신규 방문자 요약입니다.
+      채널별 UV · 구매수 · 매출 · CVR과 전주 대비 증감률(%)을 함께 보여줍니다.
     </div>
-    {df_to_html_table(traffic_this)}
+    {df_to_html_table(traffic_wow)}
   </td></tr>
 </table>
 """
@@ -1279,15 +1279,16 @@ def compose_html_weekly(
               padding:8px 10px; border-collapse:separate; min-height:220px;">
   <tr><td>
     <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
-      Top Selling Products (이번주)
+      Top Selling Products (이번주 vs 전주)
     </div>
     <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
-      매출 기준 상위 상품 리스트입니다. 신규/재구매 SKU 분리는 추후 CRM 연동 시 확장 가능합니다.
+      매출 기준 상위 상품과 전주 대비 구매수·매출 증감률입니다.
     </div>
-    {df_to_html_table(products_this, max_rows=15)}
+    {df_to_html_table(products_wow.head(15))}
   </td></tr>
 </table>
 """
+
 
     # 03번용: 전주 대비 검색수 증가 키워드
     search_wow_df = build_search_wow_table(search_this, search_last)
