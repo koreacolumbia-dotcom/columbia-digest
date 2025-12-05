@@ -12,6 +12,7 @@ import os
 import smtplib
 import base64
 import io
+import re
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, List
 
