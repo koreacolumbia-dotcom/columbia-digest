@@ -885,29 +885,37 @@ def make_funnel_chart(funnel_compare_df: pd.DataFrame) -> str:
     return _fig_to_data_uri(fig)
 
 
-def make_search_scatter_chart(search_df: pd.DataFrame) -> str:
+def make_search_heatmap_chart(search_df: pd.DataFrame) -> str:
     import matplotlib.pyplot as plt
 
+    # 데이터 없을 때 처리
     if search_df is None or search_df.empty:
         fig, ax = plt.subplots(figsize=(4.5, 3))
-        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        ax.text(0.5, 0.5, "데이터 없음", ha="center", va="center")
         ax.axis("off")
         return _fig_to_data_uri(fig)
 
-    df = search_df.copy().head(30)
+    # 상위 20개 키워드만 사용
+    df = search_df.copy().head(20)
 
-    x = df["검색수"]
-    y = df["CVR(%)"]
-    sizes = df["구매수"] * 5 + 20  # 구매수 비례 버블 크기
+    # 산점도용 값
+    x = df["검색수"].values          # Search Volume
+    y = df["CVR(%)"].values         # CVR(%)
+
+    # 검색수가 많을수록 점을 조금 더 크게
+    sizes = (x / x.max()) * 200 + 20
 
     fig, ax = plt.subplots(figsize=(4.5, 3))
     ax.scatter(x, y, s=sizes)
 
     ax.set_xlabel("Search Volume")
     ax.set_ylabel("CVR (%)")
-    ax.set_title("Search Volume vs CVR")
+    ax.set_title("Search Volume × CVR Scatter")
 
+    # 너무 붙지 않게 약간 여백
+    fig.tight_layout()
     return _fig_to_data_uri(fig)
+
 
 
 
@@ -1252,32 +1260,31 @@ def compose_html_weekly(
 </table>
 """
 
-    search_heatmap_html = f"""
+search_heatmap_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
               padding:8px 10px; border-collapse:separate; min-height:260px;">
   <tr><td>
     <div style="font-size:11px; font-weight:600; color:#1e293b; margin-bottom:4px;">
-      Search CVR Heatmap
+      Search Volume × CVR Scatter
     </div>
     <img src="{search_img}" style="width:100%; max-width:100%; height:auto; border-radius:8px; margin-bottom:6px;" />
     <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
-      검색 상위 키워드별 CVR 수준을 색상으로 표현해, 저CVR 영역과 우수 키워드를 직관적으로 구분할 수 있습니다.
+      각 검색 키워드의 검색량(Search Volume)과 전환율(CVR)의 관계를 산점도로 시각화하였습니다.
+      오른쪽 하단 영역은 트래픽은 크나 전환 효율이 낮은 키워드로, UX·상품 구성·가격 메시지 최적화가 필요한
+      최우선 개선 후보군입니다.
     </p>
     <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
-      동일 카테고리 내에서도 키워드별 전환율 편차가 크다면, 결과 페이지 구성·가격 포지셔닝·프로모션 연계가 전환에 큰 영향을 주고 있다는 의미입니다.
-    </p>
-    <p style="margin:0 0 4px 0; font-size:10px; color:#111; line-height:1.6;">
-      <b>Action:</b> 저CVR 키워드는 결과 페이지 상단 상품/필터/가격대를 재구성하고,
-      관련 쿠폰/혜택 메시지를 추가해 전환 개선 여부를 테스트합니다.
-    </p>
-    <p style="margin:0; font-size:10px; color:#111; line-height:1.6;">
-      CVR가 높은 키워드는 전용 기획전·추천 영역에 노출을 강화해 매출 기여를 극대화합니다.
+      왼쪽 상단 영역은 소량 트래픽 대비 높은 전환을 보이는 키워드로, 노출 확대 및 기획전/광고 확장 적용 시
+      효율 상승 잠재력이 큰 영역입니다.
+      <b>Action:</b> 우측 하단(검색량 高 × CVR 低) 키워드를 1차 개선 타겟으로 삼아 검색 결과 페이지 UX·랜딩 SKU를 A/B 테스트하고,
+      좌측 상단(검색량 低 × CVR 高) 키워드는 검색 광고·기획전 노출을 확대해 레버리지 구간을 검증합니다.
     </p>
   </td></tr>
 </table>
 """
+
 
     graph_summary_cards = build_graph_summary_cards(
         kpi, funnel_compare_df, mix_df, search_this
