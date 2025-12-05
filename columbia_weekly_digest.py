@@ -566,6 +566,7 @@ def build_traffic_wow(traffic_this: pd.DataFrame,
     metric_cols = ["UV", "구매수", "매출(만원)", "CVR(%)"]
     merged = calc_wow_delta(traffic_this, traffic_last, "채널", metric_cols)
 
+    # 컬럼 이름에서 (vs LW) 빼고 깔끔하게
     rename = {
         "UV_chg_pct": "UV Δ%",
         "구매수_chg_pct": "구매수 Δ%",
@@ -576,13 +577,14 @@ def build_traffic_wow(traffic_this: pd.DataFrame,
 
     out_cols = [
         "채널",
-        "UV", "UV Δ%(vs LW)",
+        "UV", "UV Δ%",
         "구매수", "구매수 Δ%",
         "매출(만원)", "매출 Δ%",
         "CVR(%)", "CVR Δp",
         "신규",
     ]
     return merged[out_cols].sort_values("매출(만원)", ascending=False)
+
 
 
 def build_products_wow(products_this: pd.DataFrame,
