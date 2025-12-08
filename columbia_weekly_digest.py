@@ -635,13 +635,13 @@ def build_weekly_insight_paragraph(
     if rev_pct >= 0:
         p1 = (
             f"이번 주 매출은 전주 대비 {rev_pct:+.1f}% 증가했고, UV는 {uv_pct:+.1f}%,"
-            f" CVR은 {cvr_pct:+.1f}p 수준의 변동을 보였습니다. "
+            f" CVR은 {cvr_pct:+.1f}%p 수준의 변동을 보였습니다. "
             f"객단가(AOV)는 {aov_pct:+.1f}% 변동, 신규 유입은 {new_pct:+.1f}% 수준입니다."
         )
     else:
         p1 = (
             f"이번 주 매출은 전주 대비 {rev_pct:+.1f}% 감소했고, UV {uv_pct:+.1f}% ·"
-            f" CVR {cvr_pct:+.1f}p 조정이 함께 나타났습니다. "
+            f" CVR {cvr_pct:+.1f}%p 조정이 함께 나타났습니다. "
             f"객단가(AOV)는 {aov_pct:+.1f}% 변동, 신규 유입은 {new_pct:+.1f}% 수준입니다."
         )
 
