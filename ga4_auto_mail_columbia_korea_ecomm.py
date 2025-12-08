@@ -757,7 +757,7 @@ def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
         )
     else:
         signals.append(
-            f"매출 {kpi['revenue_lw_pct']:.1f}%, UV {kpi['uv_lw_pct']:.1f}%, CVR {kpi['cvr_lw_pct']:.1f}p 변동을 보였습니다."
+            f"매출 {kpi['revenue_lw_pct']:.1f}%, UV {kpi['uv_lw_pct']:.1f}%, CVR {kpi['cvr_lw_pct']:.1f}%p 변동을 보였습니다."
         )
 
     # 2) 퍼널 이탈
