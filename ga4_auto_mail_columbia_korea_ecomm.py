@@ -749,7 +749,7 @@ def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
     # 1) 매출 / UV / CVR
     if kpi["revenue_lw_pct"] > 0 and kpi["cvr_lw_pct"] > 0:
         signals.append(
-            f"매출이 전주 동일 요일 대비 {kpi['revenue_lw_pct']:.1f}% ↑, CVR은 {kpi['cvr_lw_pct']:.1f}p 개선되었습니다."
+            f"매출이 전주 동일 요일 대비 {kpi['revenue_lw_pct']:.1f}% ↑, CVR은 {kpi['cvr_lw_pct']:.1f}%p 개선되었습니다."
         )
     elif kpi["revenue_lw_pct"] < 0 and kpi["uv_lw_pct"] < 0:
         signals.append(
