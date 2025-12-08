@@ -923,8 +923,8 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = None) -> str:
 
 def build_kpi_cards_html(kpi: Dict[str, float]) -> str:
     def card_block(title, main_html, this_txt, lw_txt, ly_txt, lw_pct, ly_pct, unit_is_ppt=False):
-        lw_label = f"{lw_pct:+.1f}{'p' if unit_is_ppt else '%'}"
-        ly_label = f"{ly_pct:+.1f}{'p' if unit_is_ppt else '%'}"
+        lw_label = f"{lw_pct:+.1f}{'%p' if unit_is_ppt else '%'}"
+        ly_label = f"{ly_pct:+.1f}{'%p' if unit_is_ppt else '%'}"
         return f"""
 <div style="background:#ffffff; border-radius:16px; padding:14px 16px;
             border:1px solid #e1e7f5; height:100%;">
