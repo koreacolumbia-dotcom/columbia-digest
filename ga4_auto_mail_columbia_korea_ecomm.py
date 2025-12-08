@@ -1313,13 +1313,13 @@ def compose_html_daily(
         </div>
         <div>
           <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">
-            LD {kpi['cvr_ld_pct']:+.1f}p
+            LD {kpi['cvr_ld_pct']:+.1f}%p
           </span>
           <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">
-            LW {kpi['cvr_lw_pct']:+.1f}p
+            LW {kpi['cvr_lw_pct']:+.1f}%p
           </span>
           <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">
-            LY {kpi['cvr_ly_pct']:+.1f}p
+            LY {kpi['cvr_ly_pct']:+.1f}%p
           </span>
         </div>
       </div>
