@@ -1221,7 +1221,7 @@ def build_graph_summary_cards(
 <div style="{card_style}">
   <div style="font-size:11px; font-weight:600; color:#0f172a; margin-bottom:4px;">1. What happened?</div>
   <p style="margin:0 0 4px 0; line-height:1.6;">
-    Revenue {kpi['revenue_lw_pct']:+.1f}%, UV {kpi['uv_lw_pct']:+.1f}%, CVR {kpi['cvr_lw_pct']:+.1f}p 수준의 주간 변동이 있었습니다.
+    Revenue {kpi['revenue_lw_pct']:+.1f}%, UV {kpi['uv_lw_pct']:+.1f}%, CVR {kpi['cvr_lw_pct']:+.1f}%p 수준의 주간 변동이 있었습니다.
   </p>
   <p style="margin:0 0 4px 0; line-height:1.6;">
     Orders {kpi['orders_lw_pct']:+.1f}% · AOV {kpi['aov_lw_pct']:+.1f}% · 신규 {kpi['new_lw_pct']:+.1f}%로,
