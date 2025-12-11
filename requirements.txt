@@ -4,4 +4,8 @@ google-auth
 pyppeteer
 nest-asyncio
 seaborn
+requests
+urllib3
+beautifulsoup4
+lxml
 
