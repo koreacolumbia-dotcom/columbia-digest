@@ -27,6 +27,16 @@ Daily eCommerce Performance Digest (GA4 + HTML Mail)
 import os
 import smtplib
 import pandas as pd
+import csv
+import re
+import time
+from dataclasses import dataclass
+from datetime import timezone
+import urllib3
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
@@ -61,7 +71,7 @@ DAILY_RECIPIENTS = [
     e.strip()
     for e in os.getenv(
         "DAILY_RECIPIENTS",
-        "#Korea_ECOM@Columbia.com").split(",")
+        "hugh.kang@Columbia.com").split(",")
     if e.strip()
 ]
 
@@ -136,6 +146,528 @@ def format_date_label(ga_date_str):
         return d.strftime("%Y-%m-%d")
     except Exception:
         return str(ga_date_str)
+
+
+
+# =====================================================================
+# DCInside 등산 갤 VOC 크롤러 & 분석
+# (크롤링 → VOC 분석 → 아웃도어 브랜드 트렌드)
+# =====================================================================
+
+import csv
+import re
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import List, Dict
+
+import urllib3
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+from urllib.parse import urljoin
+
+# =========================================
+# 기본 설정
+# =========================================
+
+KST = timezone(timedelta(hours=9))
+GALLERY_ID = "climbing"
+MAX_PAGES = 6
+RAW_CSV_PATH = "dc_climbing_voc_raw.csv"
+
+# SSL 경고 끄기 (회사망/프록시에서 인증서 문제 우회용)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+SESSION = requests.Session()
+SESSION.headers.update(
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+)
+
+
+def fetch(url: str, params=None) -> str:
+    """
+    DC 요청용 공통 fetch
+    - verify=False: 회사망 SSL 인증서 문제 우회
+    - 3번까지 재시도 후 실패 시 "" 반환
+    """
+    for attempt in range(3):
+        try:
+            resp = SESSION.get(url, params=params, timeout=10, verify=False)
+            resp.raise_for_status()
+            return resp.text
+        except Exception as e:
+            print(f"⚠️ fetch 실패 {attempt+1}/3 : {e}")
+            time.sleep(1 + attempt)
+    print(f"❌ fetch 실패 → 이번 요청 스킵: {url}")
+    return ""
+
+
+@dataclass
+class Post:
+    title: str
+    content: str      # 본문
+    comments: str     # 댓글 전체 텍스트
+    created_at: datetime
+    url: str
+
+
+# =========================================
+# 날짜 파싱
+# =========================================
+
+def parse_dc_date(text: str) -> datetime:
+    text = text.strip()
+    for fmt in ("%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d"):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=KST)
+        except Exception:
+            continue
+    return datetime.now(KST)
+
+
+# =========================================
+# DC 등산 갤러리 크롤링 (본문 + 댓글)
+# =========================================
+
+def crawl_dc_climbing(max_pages: int = MAX_PAGES) -> List[Post]:
+    print(">> 등산 갤러리 크롤링 시작")
+    out: List[Post] = []
+    base = "https://gall.dcinside.com"
+
+    for page in range(1, max_pages + 1):
+        print(f"[Page {page}]")
+        html = fetch(f"{base}/board/lists/?id={GALLERY_ID}&page={page}")
+        if not html:
+            if page == 1:
+                print("⚠️ 리스트 페이지 응답 없음 → 크롤링 중단")
+            break
+
+        soup = BeautifulSoup(html, "html.parser")
+        rows = soup.select("tr.ub-content")
+        if not rows:
+            break
+
+        for row in rows:
+            try:
+                a = row.select_one("td.gall_tit a")
+                if not a:
+                    continue
+
+                title = a.get_text(" ", strip=True)
+                href = a.get("href", "").strip()
+                if not href:
+                    continue
+
+                # javascript:; 같은 것 스킵
+                if href.startswith("javascript:"):
+                    continue
+
+                # 링크 정규화
+                if href.startswith("http"):
+                    link = href
+                else:
+                    link = urljoin(base, href)
+
+                # 실제 게시글(view)만
+                if "board/view" not in link:
+                    continue
+
+                view_html = fetch(link)
+                if not view_html:
+                    continue
+
+                vsoup = BeautifulSoup(view_html, "html.parser")
+
+                # 본문
+                body = vsoup.select_one(".write_div")
+                content = body.get_text("\n", strip=True) if body else title
+
+                # 댓글 (구/신 구조 둘 다 커버)
+                comment_texts: List[str] = []
+                for li in vsoup.select("li.ub-content"):
+                    c_body = li.get_text("\n", strip=True)
+                    if c_body:
+                        comment_texts.append(c_body)
+                for c in vsoup.select(".comment_box"):
+                    c_body = c.get_text("\n", strip=True)
+                    if c_body:
+                        comment_texts.append(c_body)
+                comments = "\n".join(comment_texts)
+
+                # 날짜
+                d_el = vsoup.select_one(".gall_date")
+                created_at = (
+                    parse_dc_date(d_el.get_text(strip=True)) if d_el else datetime.now(KST)
+                )
+
+                out.append(
+                    Post(
+                        title=title,
+                        content=content,
+                        comments=comments,
+                        created_at=created_at,
+                        url=link,
+                    )
+                )
+
+            except Exception as e:
+                print(f"⚠️ 상세 파싱 실패: {e}")
+                continue
+
+        if len(out) >= 300:
+            break
+
+    print(f"✅ DC 등산갤 수집 완료: {len(out)}개\n")
+    return out
+
+
+# =========================================
+# VOC 분석 로직
+# =========================================
+
+BRAND_KEYWORDS: Dict[str, List[str]] = {
+    # Columbia 계열
+    "Columbia": [
+        "컬럼비아", "콜롬비아", "코롬비아",
+        "columbia", "columbia sportswear",
+        "컬럼", "콜럼비아",
+        "옴니히트", "옴니 히트", "omni-heat", "omni heat",
+        "티타늄", "titanium",
+    ],
+
+    # 메이저 경쟁사들
+    "The North Face": [
+        "노스페이스", "노스 페이스", "더노스페이스", "더 노스페이스",
+        "the north face", "tnf", "노페"
+    ],
+    "Patagonia": [
+        "파타고니아", "patagonia", "파타"
+    ],
+    "NEPA": [
+        "네파", "nepa", "패스파인더"
+    ],
+    "K2": [
+        "케이투", "k2"
+    ],
+    "Black Yak": [
+        "블랙야크", "blackyak", "black yak", "야크"
+    ],
+    "Kolon Sport": [
+        "코오롱스포츠", "코오롱 스포츠", "kolon sport"
+    ],
+    "Eider": [
+        "아이더", "eider"
+    ],
+    "Millet": [
+        "밀레", "millet"
+    ],
+    "Montbell": [
+        "몽벨", "mont-bell", "montbell"
+    ],
+    "Discovery": [
+        "디스커버리", "디스커버리익스페디션",
+        "discovery expedition", "discovery"
+    ],
+    "Prospecs": [
+        "프로스펙스", "prospecs"
+    ],
+    "Descente": [
+        "데상트", "descente"
+    ],
+}
+
+PRICE_WORDS = ["할인", "세일", "쿠폰", "만원", "가격", "가성비"]
+POS_WORDS = ["좋다", "괜찮", "추천", "만족", "강추", "개추"]
+NEG_WORDS = ["별로", "실망", "구림", "노답", "쓰레기", "후짐"]
+
+
+def clean_text(t: str) -> str:
+    t = re.sub(r"[^가-힣a-zA-Z0-9\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def detect_brands(text: str) -> List[str]:
+    found: List[str] = []
+    lower = text.lower()
+    for brand, kws in BRAND_KEYWORDS.items():
+        for kw in kws:
+            if kw.lower() in lower:
+                found.append(brand)
+                break
+    return found
+
+
+def analyze_voc(posts: List[Post]) -> Dict:
+    # posts가 비어있으면 바로 빈 결과 리턴
+    if not posts:
+        return {
+            "used_date": "데이터 없음",
+            "total": 0,
+            "brand_counts": {b: 0 for b in BRAND_KEYWORDS},
+            "brand_post_count": 0,
+            "col_count": 0,
+            "price_ratio": 0.0,
+            "pos_ratio": 0.0,
+            "neg_ratio": 0.0,
+            "voices": [],
+            "peak_hour": None,
+        }
+
+    df = pd.DataFrame(
+        [
+            {
+                "title": p.title,
+                "content": p.content,
+                "comments": p.comments,
+                # 🔥 제목 + 본문 + 댓글 전체를 하나의 텍스트로 분석
+                "text": clean_text(p.title + "\n" + p.content + "\n" + p.comments),
+                "created_at": p.created_at,
+            }
+            for p in posts
+        ]
+    )
+
+    df["date"] = df["created_at"].dt.date
+    today = datetime.now(KST).date()
+    target = today - timedelta(days=1)
+
+    df_day = df[df["date"] == target]
+    if df_day.empty:
+        df_day = df.copy()
+        used_date = f"{target} (전날 없음 → 전체 기준)"
+    else:
+        used_date = str(target)
+
+    # 브랜드/키워드 플래그
+    df_day["brands"] = df_day["text"].apply(detect_brands)
+    df_day["has_brand"] = df_day["brands"].apply(lambda b: len(b) > 0)
+    df_day["has_price"] = df_day["text"].apply(
+        lambda t: any(w in t for w in PRICE_WORDS)
+    )
+    df_day["is_pos"] = df_day["text"].apply(
+        lambda t: any(w in t for w in POS_WORDS)
+    )
+    df_day["is_neg"] = df_day["text"].apply(
+        lambda t: any(w in t for w in NEG_WORDS)
+    )
+
+    df_day["has_columbia"] = df_day["brands"].apply(
+        lambda b: "Columbia" in b
+    )
+
+    # 브랜드별 언급 수 (mention count)
+    brand_counts = {b: 0 for b in BRAND_KEYWORDS}
+    for bs in df_day["brands"]:
+        for b in bs:
+            brand_counts[b] += 1
+
+    # 브랜드가 하나라도 언급된 게시글 수
+    brand_post_count = int(df_day["has_brand"].sum())
+
+    # Columbia 관련 문장에서 실제 문장 일부 클립
+    voices: List[str] = []
+    for txt in df_day[df_day["has_columbia"]]["text"]:
+        sents = re.split(r"[.!?…\n]+", txt)
+        for s in sents:
+            s = s.strip()
+            if (
+                4 <= len(s) <= 120
+                and ("컬럼비아" in s or "콜롬비아" in s or "columbia" in s.lower())
+            ):
+                voices.append(s)
+
+    # 🔥 중복만 제거하고 전부 사용 (슬라이스 제거)
+    voices = list(dict.fromkeys(voices))
+
+    # 시간대
+    df_day["hour"] = df_day["created_at"].dt.hour
+    peak_hour = (
+        int(df_day["hour"].value_counts().idxmax()) if not df_day.empty else None
+    )
+
+    # 컬럼비아 관련 지표
+    col_mask = df_day["has_columbia"]
+    col_cnt = int(col_mask.sum())
+    if col_cnt > 0:
+        price_ratio = float(df_day.loc[col_mask, "has_price"].mean() * 100)
+        pos_ratio = float(df_day.loc[col_mask, "is_pos"].mean() * 100)
+        neg_ratio = float(df_day.loc[col_mask, "is_neg"].mean() * 100)
+    else:
+        price_ratio = pos_ratio = neg_ratio = 0.0
+
+    return {
+        "used_date": used_date,
+        "total": int(len(df_day)),
+        "brand_counts": brand_counts,
+        "brand_post_count": brand_post_count,
+        "col_count": col_cnt,
+        "price_ratio": price_ratio,
+        "pos_ratio": pos_ratio,
+        "neg_ratio": neg_ratio,
+        "voices": voices,
+        "peak_hour": peak_hour,
+    }
+
+
+# =========================================
+# Digest 생성
+# =========================================
+
+def build_digest(r: Dict) -> str:
+    total = r["total"]
+    col_cnt = r["col_count"]
+    brand_counts = r["brand_counts"]
+    brand_post_count = r["brand_post_count"]
+
+    total_brand_mentions = sum(brand_counts.values())
+    col_mentions = brand_counts.get("Columbia", 0)
+
+    # 비율 계산 (0 나누기 방지)
+    col_share_total_posts = (col_cnt / total * 100) if total > 0 else 0.0
+    col_share_brand_mentions = (
+        (col_mentions / total_brand_mentions * 100)
+        if total_brand_mentions > 0
+        else 0.0
+    )
+    brand_post_ratio = (
+        (brand_post_count / total * 100) if total > 0 else 0.0
+    )
+
+    # 브랜드 순위 (언급 0건 제외)
+    sorted_brands = [
+        (b, c) for b, c in sorted(brand_counts.items(), key=lambda x: x[1], reverse=True) if c > 0
+    ]
+    col_rank = None
+    for idx, (b, _) in enumerate(sorted_brands, start=1):
+        if b == "Columbia":
+            col_rank = idx
+            break
+
+    lines: List[str] = []
+
+    lines.append("==== DC CLIMBING DAILY VOC ====\n")
+    lines.append(f"기준일: {r['used_date']}\n")
+
+    # ---------------- Columbia Summary ----------------
+    lines.append("🔹 Columbia Summary\n")
+    lines.append(f"- 전날 VOC 총 {total}건")
+    lines.append(f"- 이 중 브랜드가 하나 이상 언급된 게시글: {brand_post_count}건 (약 {brand_post_ratio:.1f}%)")
+    lines.append(f"- 컬럼비아 언급 게시글: {col_cnt}건 (전체 대비 약 {col_share_total_posts:.1f}%)")
+    lines.append(f"- 브랜드 언급(mention) 중 컬럼비아 비중: 약 {col_share_brand_mentions:.1f}%")
+    lines.append(f"- 가격/할인 언급 비율(컬럼비아 문장 기준): {r['price_ratio']:.1f}%")
+    lines.append(
+        f"- 긍정/부정 비율(컬럼비아 문장 기준): {r['pos_ratio']:.1f}% / {r['neg_ratio']:.1f}%"
+    )
+
+    # 간단 해석 문장
+    if col_cnt == 0:
+        lines.append("  · 전날 등산갤에서는 컬럼비아 직접 언급이 확인되지 않았습니다.")
+    else:
+        if col_share_total_posts < 2:
+            lines.append("  · 전체 게시글 대비 컬럼비아 언급은 아직 '소수 의견' 수준입니다.")
+        else:
+            lines.append("  · 전체 게시글 중에서도 컬럼비아 언급 비중이 체감될 정도로 나타납니다.")
+
+        if r["price_ratio"] < 5:
+            lines.append("  · 가격/할인보다는 브랜드 자체나 특정 에피소드 중심의 언급이 많습니다.")
+        else:
+            lines.append("  · 가격/할인, 가성비 이슈와 함께 컬럼비아가 거론되는 비중이 눈에 띕니다.")
+
+        if r["pos_ratio"] > r["neg_ratio"]:
+            lines.append("  · 간이 감성 분석 기준으로는 컬럼비아에 대한 긍정 뉘앙스가 더 우세합니다.")
+        elif r["pos_ratio"] < r["neg_ratio"]:
+            lines.append("  · 간이 감성 분석 기준으로는 컬럼비아 관련 부정 언급 비중이 더 큽니다.")
+        else:
+            lines.append("  · 긍/부정 키워드가 거의 포착되지 않아, 정보성/잡담성 언급이 중심으로 보입니다.")
+
+    lines.append("\n🔹 브랜드 언급 비중\n")
+    for b, cnt in sorted_brands:
+        share = (cnt / total_brand_mentions * 100) if total_brand_mentions > 0 else 0.0
+        lines.append(f"- {b}: {cnt}건 (브랜드 언급 중 약 {share:.1f}%)")
+
+    # ---------------- Columbia vs 경쟁사 인사이트 ----------------
+    lines.append("\n🔹 Columbia vs 경쟁사 인사이트\n")
+    if not sorted_brands:
+        lines.append("- 전날 기준, 특정 아웃도어 브랜드명이 뚜렷하게 언급된 게시글이 거의 없습니다.")
+    else:
+        top_brands_str = ", ".join([f"{b}({c}건)" for b, c in sorted_brands[:3]])
+        lines.append(f"- 브랜드 언급 상위 TOP3: {top_brands_str}")
+
+        if col_mentions == 0:
+            lines.append("- 컬럼비아는 어제자 등산갤 대화에서 브랜드 키워드로는 노출되지 않았습니다.")
+        else:
+            if col_rank == 1:
+                lines.append("- 컬럼비아는 전날 기준 브랜드 언급량에서 1위로, 대화의 중심축에 가깝습니다.")
+            elif col_rank in (2, 3):
+                lines.append(f"- 컬럼비아는 전날 기준 브랜드 언급 {col_rank}위 수준으로, 상위 그룹에 위치합니다.")
+            else:
+                lines.append(f"- 컬럼비아는 전날 기준 브랜드 언급 {col_rank}위로, 니치하게 거론되고 있습니다.")
+
+            if len(sorted_brands) > 1:
+                top_brand, top_cnt = sorted_brands[0]
+                if top_brand != "Columbia":
+                    diff = top_cnt - col_mentions
+                    lines.append(
+                        f"- 최다 언급 브랜드는 '{top_brand}'이며, 컬럼비아 대비 약 {diff}건 더 많이 언급되었습니다."
+                    )
+
+    # ---------------- 유저 실제 문장 ----------------
+    lines.append("\n🔹 유저 실제 문장 (Columbia 관련 발췌)\n")
+    if r["voices"]:
+        for s in r["voices"]:
+            lines.append(f'- "{s}"')
+    else:
+        lines.append("- (전날 컬럼비아 관련 유의미한 문장 없음)")
+
+    # ---------------- 시간대 패턴 ----------------
+    lines.append("\n🔹 시간대 패턴\n")
+    if r["peak_hour"] is not None:
+        lines.append(f"- 게시글 최다 작성 시간대: {r['peak_hour']}시 전후")
+        lines.append("  · 이 시간대 중심으로 신규 글/댓글이 몰리므로, VOC 모니터링 타이밍으로 활용 가능")
+    else:
+        lines.append("- 전날 기준 데이터가 부족해 시간대 패턴은 생략합니다.")
+
+    lines.append("\n==== END ====\n")
+    return "\n".join(lines)
+
+
+# =========================================
+# 저장
+# =========================================
+
+def save_csv(posts: List[Post]):
+    with open(RAW_CSV_PATH, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["title", "content", "comments", "created_at", "url"])
+        for p in posts:
+            w.writerow([p.title, p.content, p.comments, p.created_at.isoformat(), p.url])
+    print(f"CSV 저장 완료: {RAW_CSV_PATH}")
+
+
+# =========================================
+# MAIN
+# =========================================
+
+def main():
+    posts = crawl_dc_climbing()
+    save_csv(posts)
+
+    if not posts:
+        print("\n❌ 수집된 게시글이 없어 VOC 분석을 건너뜁니다.")
+        return
+
+    result = analyze_voc(posts)
+    digest = build_digest(result)
+
+    print("\n" + digest)
+
 
 
 # =====================================================================
@@ -455,6 +987,49 @@ def src_hourly_revenue_traffic():
     df["매출"] = pd.to_numeric(df["매출"], errors="coerce").fillna(0.0).astype(float)
     df = df.sort_values("시간_숫자")
     return df[["시간", "시간_숫자", "세션수", "매출"]]
+
+
+
+
+
+def src_organic_search_engines_yesterday(limit: int = 10) -> pd.DataFrame:
+    """
+    어제 기준 Organic Search 유입을 검색엔진(소스)별로 나눈 데이터.
+    - sessionDefaultChannelGroup = "Organic Search"
+    - sessionSource 기준 그룹화
+    """
+    df = ga_run_report(
+        dimensions=["sessionDefaultChannelGroup", "sessionSource"],
+        metrics=["sessions", "transactions"],
+        start_date="yesterday",
+        end_date="yesterday",
+        limit=0,
+    )
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["검색엔진", "UV", "구매수", "CVR(%)"])
+
+    df = df.copy()
+    df = df[df["sessionDefaultChannelGroup"] == "Organic Search"]
+    if df.empty:
+        return pd.DataFrame(columns=["검색엔진", "UV", "구매수", "CVR(%)"])
+
+    df.rename(
+        columns={
+            "sessionSource": "검색엔진",
+            "sessions": "UV",
+            "transactions": "구매수",
+        },
+        inplace=True,
+    )
+
+    # 동일 검색엔진명 묶기 (예: google / google.co.kr)
+    df = df.groupby("검색엔진", as_index=False).agg({"UV": "sum", "구매수": "sum"})
+
+    df["CVR(%)"] = (df["구매수"] / df["UV"].replace(0, pd.NA)) * 100
+    df["CVR(%)"] = df["CVR(%)"].round(1)
+
+    df = df.sort_values("UV", ascending=False).head(limit)
+    return df[["검색엔진", "UV", "구매수", "CVR(%)"]]
 
 
 def src_top_products_ga(limit: int = 200) -> pd.DataFrame:
@@ -1507,6 +2082,18 @@ def send_daily_digest():
     products_all = src_top_products_ga(limit=200)
     pages_df = src_top_pages_ga(limit=10)
 
+    # 오가닉 검색엔진별 유입
+    organic_engines_df = src_organic_search_engines_yesterday(limit=10)
+
+    # DC 등산 갤 VOC
+    dc_voc = None
+    try:
+        posts = crawl_dc_climbing()
+        if posts:
+            dc_voc = analyze_voc(posts)
+    except Exception as e:
+        print(f"[WARN] DC VOC 분석 중 에러: {e}")
+
     # 상품 파생
     products_top_df = products_all.sort_values("상품조회수", ascending=False)
 
@@ -1551,6 +2138,21 @@ def send_daily_digest():
         )
         send_critical_alert("⚠️ [Critical] Columbia Daily 지표 이상 감지", body)
 
+
+    # 섹션 02 아래에 오가닉 검색엔진 / DC VOC 섹션 삽입
+    try:
+        extra_html = build_extra_sections_html(organic_engines_df, dc_voc)
+    except Exception as e:
+        print(f"[WARN] extra sections html 생성 중 에러: {e}")
+        extra_html = ""
+
+    if extra_html:
+        footer_marker = '<div style="margin-top:18px; font-size:10px; color:#99a; text-align:right;">'
+        if footer_marker in html:
+            html = html.replace(footer_marker, extra_html + "\n\n" + footer_marker, 1)
+        else:
+            html = html.replace("</body>", extra_html + "\n</body>", 1)
+
     subject = "[Daily] Columbia eCommerce Performance Digest"
 
     jpeg_path = html_to_jpeg(html)
@@ -1581,3 +2183,225 @@ async def capture_digest():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(capture_digest())
+
+# =====================================================================
+# DC VOC & 오가닉 검색엔진 섹션용 HTML 헬퍼
+# =====================================================================
+
+def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: int | None = None) -> str:
+    """
+    compose_html_daily 내부 df_to_html_box와 유사한 스타일의 카드 (외부용).
+    """
+    if df is None or df.empty:
+        table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
+    else:
+        d = df.copy()
+        if max_rows is not None:
+            d = d.head(max_rows)
+        rows_html = ""
+        for _, row in d.iterrows():
+            tds = "".join(
+                f"<td style='font-size:11px; padding:2px 6px 2px 0; color:#222;'>{row[col]}</td>"
+                for col in d.columns
+            )
+            rows_html += f"<tr>{tds}</tr>"
+        header_html = "".join(
+            f"<th align='left' style='font-size:10px; padding:0 6px 3px 0; color:#666;'>{col}</th>"
+            for col in d.columns
+        )
+        table_html = f"""<table cellpadding='0' cellspacing='0' style='width:100%; border-collapse:collapse;'>
+  <thead><tr>{header_html}</tr></thead>
+  <tbody>{rows_html}</tbody>
+</table>"""
+
+    box_html = f"""<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:12px;
+              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
+              padding:10px 12px; border-collapse:separate;">
+  <tr><td>
+    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:3px;">
+      {title}
+    </div>
+    <div style="font-size:10px; color:#777; margin-bottom:6px;">
+      {subtitle}
+    </div>
+    {table_html}
+  </td></tr>
+</table>"""
+    return box_html
+
+
+def build_dc_voc_html(dc_voc: dict | None) -> str:
+    """
+    DC 등산 갤 VOC 결과를 하나의 섹션으로 렌더링.
+    - 상단: 2x2 mini KPI 카드
+    - 하단: Columbia 관련 실제 문장 리스트
+    """
+    if not dc_voc:
+        return ""
+
+    r = dc_voc
+    total = r.get("total", 0)
+    brand_post_count = r.get("brand_post_count", 0)
+    col_cnt = r.get("col_count", 0)
+    brand_counts = r.get("brand_counts", {}) or {}
+    voices = r.get("voices", []) or []
+    used_date = r.get("used_date", "")
+    peak_hour = r.get("peak_hour", None)
+    price_ratio = r.get("price_ratio", 0.0)
+    pos_ratio = r.get("pos_ratio", 0.0)
+    neg_ratio = r.get("neg_ratio", 0.0)
+
+    total_brand_mentions = sum(brand_counts.values())
+    col_mentions = brand_counts.get("Columbia", 0)
+
+    col_share_total_posts = (col_cnt / total * 100) if total > 0 else 0.0
+    col_share_brand_mentions = (
+        (col_mentions / total_brand_mentions * 100) if total_brand_mentions > 0 else 0.0
+    )
+    brand_post_ratio = (brand_post_count / total * 100) if total > 0 else 0.0
+
+    # 브랜드 TOP5
+    sorted_brands = sorted(brand_counts.items(), key=lambda x: x[1], reverse=True)
+    top_brand_rows = ""
+    for b, cnt in sorted_brands[:5]:
+        if cnt <= 0:
+            continue
+        share = (cnt / total_brand_mentions * 100) if total_brand_mentions > 0 else 0.0
+        top_brand_rows += f"<tr><td style='font-size:11px; padding:2px 6px 1px 0; color:#222;'>{b}</td><td style='font-size:11px; padding:2px 0 1px 0; color:#222;'>{cnt}건 ({share:.1f}%)</td></tr>"
+
+    if not top_brand_rows:
+        top_brand_rows = "<tr><td colspan='2' style='font-size:11px; padding:2px 0; color:#999;'>브랜드 언급 없음</td></tr>"
+
+    top_brand_table = f"""<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse;">
+  <tbody>
+    {top_brand_rows}
+  </tbody>
+</table>"""
+
+    # mini 카드 4개
+    card_style = "background:#ffffff; border-radius:12px; border:1px solid #e1e7f5; padding:8px 10px; font-size:11px; color:#222;"
+
+    card1 = f"""<div style="{card_style}">
+  <div style="font-size:10px; color:#666; margin-bottom:2px;">전날 VOC · 브랜드 언급</div>
+  <div style="font-size:13px; font-weight:700; color:#222; margin-bottom:3px;">
+    총 {total}건 / 브랜드 언급 글 {brand_post_count}건
+  </div>
+  <div style="font-size:10px; color:#666;">
+    브랜드 언급 비중 {brand_post_ratio:.1f}%
+  </div>
+</div>"""
+
+    card2 = f"""<div style="{card_style}">
+  <div style="font-size:10px; color:#666; margin-bottom:2px;">Columbia 언급</div>
+  <div style="font-size:13px; font-weight:700; color:#222; margin-bottom:3px;">
+    게시글 {col_cnt}건 / 브랜드 언급 {col_mentions}회
+  </div>
+  <div style="font-size:10px; color:#666;">
+    전체 글 대비 {col_share_total_posts:.1f}% · 브랜드 언급 중 {col_share_brand_mentions:.1f}%
+  </div>
+</div>"""
+
+    card3 = f"""<div style="{card_style}">
+  <div style="font-size:10px; color:#666; margin-bottom:2px;">가격/할인 & 감성</div>
+  <div style="font-size:11px; color:#222; margin-bottom:3px;">
+    가격/할인 언급 {price_ratio:.1f}%<br>
+    긍정 {pos_ratio:.1f}% / 부정 {neg_ratio:.1f}%
+  </div>
+  <div style="font-size:10px; color:#888;">
+    (컬럼비아 관련 문장 기준 단순 키워드 매칭)
+  </div>
+</div>"""
+
+    peak_txt = "없음" if peak_hour is None else f"{peak_hour}시 전후"
+    card4 = f"""<div style="{card_style}">
+  <div style="font-size:10px; color:#666; margin-bottom:2px;">시간대 패턴</div>
+  <div style="font-size:13px; font-weight:700; color:#222; margin-bottom:3px;">
+    게시글 집중 시간대: {peak_txt}
+  </div>
+  <div style="font-size:10px; color:#888;">
+    VOC 모니터링 / 커뮤니케이션 타이밍 참고용
+  </div>
+</div>"""
+
+    # 유저 실제 문장
+    if not voices:
+        voices_html = "<p style='font-size:11px; color:#999; margin:0;'>Columbia 관련 직접 언급이 없습니다.</p>"
+    else:
+        clipped = voices[:4]
+        items = "".join(
+            f"<li style='margin-bottom:3px;'>{v}</li>"
+            for v in clipped
+        )
+        voices_html = f"""<ul style="margin:0; padding-left:18px; font-size:11px; color:#222;">
+  {items}
+</ul>"""
+
+    section_html = f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
+  03 · OUTDOOR COMMUNITY VOC (DC 등산갤)
+</div>
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px;">
+  <tr>
+    <td width="50%" valign="top" style="padding:2px 6px 6px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate; border-spacing:6px 8px;">
+        <tr>
+          <td width="50%" valign="top">{card1}</td>
+          <td width="50%" valign="top">{card2}</td>
+        </tr>
+        <tr>
+          <td width="50%" valign="top">{card3}</td>
+          <td width="50%" valign="top">{card4}</td>
+        </tr>
+      </table>
+    </td>
+    <td width="50%" valign="top" style="padding:2px 0 6px 6px;">
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="background:#ffffff; border-radius:12px;
+                    border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
+                    padding:8px 10px; border-collapse:separate;">
+        <tr><td>
+          <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:3px;">
+            어제 아웃도어 브랜드 언급 TOP & Columbia 실제 문장
+          </div>
+          <div style="font-size:10px; color:#777; margin-bottom:6px;">
+            기준일: {used_date}
+          </div>
+          <div style="margin-bottom:8px;">
+            {top_brand_table}
+          </div>
+          <div style="font-size:10px; color:#666; margin-bottom:4px;">
+            Columbia 관련 유저 실제 문장 발췌:
+          </div>
+          {voices_html}
+        </td></tr>
+      </table>
+    </td>
+  </tr>
+</table>"""
+    return section_html
+
+
+def build_extra_sections_html(organic_engines_df: pd.DataFrame | None, dc_voc: dict | None) -> str:
+    """
+    02 섹션 아래에 붙일 추가 섹션 (오가닉 검색엔진별 + DC VOC).
+    """
+    blocks: list[str] = []
+
+    if organic_engines_df is not None and not organic_engines_df.empty:
+        organic_box = df_to_html_box_extra(
+            "오가닉 검색 유입 (검색엔진별)",
+            "어제 Organic Search 유입을 검색엔진(소스)별로 나눈 데이터입니다.",
+            organic_engines_df[["검색엔진", "UV", "구매수", "CVR(%)"]],
+            max_rows=10,
+        )
+        blocks.append(organic_box)
+
+    dc_html = build_dc_voc_html(dc_voc)
+    if dc_html:
+        blocks.append(dc_html)
+
+    if not blocks:
+        return ""
+
+    return "\n\n".join(blocks)
+
