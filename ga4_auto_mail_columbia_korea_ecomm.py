@@ -67,13 +67,8 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "koreacolumbia@gmail.com")
 SMTP_PASS = os.getenv("SMTP_PASS", "xxopfytdkxcyhisa")
 
-DAILY_RECIPIENTS = [
-    e.strip()
-    for e in os.getenv(
-        "DAILY_RECIPIENTS",
-        "hugh.kang@Columbia.com").split(",")
-    if e.strip()
-]
+DAILY_RECIPIENTS = ["#korea_Ecom@columbia.com"]
+
 
 ALERT_RECIPIENT = os.getenv("ALERT_RECIPIENT", "").strip()
 
