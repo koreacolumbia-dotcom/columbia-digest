@@ -12,7 +12,9 @@ Daily eCommerce Performance Digest (GA4 + HTML Mail)
 [Hotfix]
 - pandas TypeError: Expected numeric dtype, got object -> _add_delta_cols() numeric casting 강화
 - 02 카드 문구/컬럼명 오해 방지(수Δ -> 전일 대비(%))
-- 02 카드 여백/높이(칸 넓음) 축소
+- ✅ 카드 여백/높이 축소 + 카드 크기 균형 맞춤(최대한 “컨텐츠 높이” 기반)
+- ✅ 02: "조회는 적지만 구매전환이 좋은 상품" 가로폭 축소 / "온사이트 검색 상위 키워드" 가로폭 확대
+- ✅ 03: "오가닉 검색 유입(검색엔진별)" + "오가닉 서치 상세(Source/Medium)" 2개 나란히 배치
 - DC 크롤링/VOC 코드 전체 제거
 """
 
@@ -20,12 +22,12 @@ import os
 import smtplib
 import pandas as pd
 
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
@@ -45,7 +47,7 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 
-# ✅ 여기 기본 수신자. (원하면 env DAILY_RECIPIENTS="a@b.com,c@d.com"로 덮어쓰기)
+# ✅ 기본 수신자
 DAILY_RECIPIENTS = [
     e.strip()
     for e in os.getenv("DAILY_RECIPIENTS", "korea_Ecom@columbia.com").split(",")
@@ -342,8 +344,8 @@ def src_funnel_day(day_keyword: str):
     base = df.set_index("단계")["수"]
     view_cnt = int(base.get("view_item", 0))
     cart_cnt = int(base.get("add_to_cart", 0))
-    chk_cnt  = int(base.get("begin_checkout", 0))
-    buy_cnt  = int(base.get("purchase", 0))
+    chk_cnt = int(base.get("begin_checkout", 0))
+    buy_cnt = int(base.get("purchase", 0))
 
     data = [
         {"구간": "상품 상세 → 장바구니", "기준": "PDP → Cart",
@@ -736,14 +738,12 @@ def _add_delta_cols(curr: pd.DataFrame, prev: pd.DataFrame, key_cols: list, metr
     c = curr.copy()
     p = prev.copy()
 
-    # prev 컬럼 rename
     keep_prev = key_cols + [m for m in metric_cols if m in p.columns]
     p = p[keep_prev].copy()
     p.rename(columns={m: f"{m}__prev" for m in metric_cols if m in p.columns}, inplace=True)
 
     out = c.merge(p, on=key_cols, how="left")
 
-    # ✅ merge 이후에도 숫자열이 object가 될 수 있어 재캐스팅
     for m in metric_cols:
         if m in out.columns:
             out[m] = _to_numeric_series(out[m])
@@ -940,38 +940,68 @@ def build_actions(kpi, funnel_rate_df, traffic_df, search_df):
 
 
 # =====================================================================
-# 6) EXTRA 섹션 HTML 헬퍼 (정의 먼저!)
+# 6) EXTRA 섹션 HTML 헬퍼
 # =====================================================================
 
-def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: Optional[int] = None) -> str:
+# 공통 카드/테이블 스타일 (메일 클라 호환 우선)
+CARD_TABLE_STYLE = (
+    "background:#ffffff; border-radius:12px; "
+    "border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03); "
+    "border-collapse:separate;"
+)
+
+# 테이블 셀 공통 (세로로 글자 떨어지는 현상 완화)
+TD_STYLE_BASE = "padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333; word-break:keep-all; overflow-wrap:anywhere;"
+TH_STYLE_BASE = "padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555; word-break:keep-all;"
+
+
+def _apply_no_wrap_cols(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
+    """특정 컬럼만 줄바꿈 방지(가로폭 넓힐 때 세로로 쪼개지는 현상 방지)."""
+    if df is None or df.empty or not cols:
+        return df
+    d = df.copy()
+    for c in cols:
+        if c in d.columns:
+            d[c] = d[c].astype(str).map(lambda x: f"<span style='white-space:nowrap;'>{x}</span>")
+    return d
+
+
+def _df_to_styled_table_html(df: pd.DataFrame) -> str:
+    inner = df.to_html(index=False, border=0, justify="left", escape=False)
+    inner = inner.replace(
+        '<table border="0" class="dataframe">',
+        '<table style="width:100%; border-collapse:collapse; font-size:10px; table-layout:auto;">'
+    )
+    inner = inner.replace('<tr style="text-align: right;">', '<tr style="background:#f4f6fb; text-align:left;">')
+    inner = inner.replace("<th>", f"<th style=\"{TH_STYLE_BASE}\">")
+    inner = inner.replace("<td>", f"<td style=\"{TD_STYLE_BASE}\">")
+    return inner
+
+
+def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: Optional[int] = None,
+                        nowrap_cols: Optional[List[str]] = None) -> str:
     if df is None or df.empty:
         table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
     else:
         d = df.copy()
         if max_rows is not None:
             d = d.head(max_rows)
+        if nowrap_cols:
+            d = _apply_no_wrap_cols(d, nowrap_cols)
+        table_html = _df_to_styled_table_html(d)
 
-        # 기본값: dataframe to_html
-        inner = d.to_html(index=False, border=0, justify="left", escape=False)
-        inner = inner.replace('<table border="0" class="dataframe">', '<table style="width:100%; border-collapse:collapse; font-size:10px;">')
-        inner = inner.replace('<tr style="text-align: right;">', '<tr style="background:#f4f6fb; text-align:left;">')
-        inner = inner.replace("<th>", "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555;\">")
-        inner = inner.replace("<td>", "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333;\">")
-        table_html = inner
-
-    return f"""<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#ffffff; border-radius:12px;
-              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
-              padding:8px 10px; border-collapse:separate;">
-  <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:3px;">
-      {title}
-    </div>
-    <div style="font-size:10px; color:#777; margin-bottom:6px;">
-      {subtitle}
-    </div>
-    {table_html}
-  </td></tr>
+    return f"""<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}">
+  <tr>
+    <td style="padding:8px 10px;">
+      <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:3px;">
+        {title}
+      </div>
+      <div style="font-size:10px; color:#777; margin-bottom:6px; line-height:1.35;">
+        {subtitle}
+      </div>
+      {table_html}
+    </td>
+  </tr>
 </table>"""
 
 
@@ -985,26 +1015,31 @@ def build_extra_sections_html(
 ) -> str:
     blocks: List[str] = []
 
-    if organic_engines_df is not None and not organic_engines_df.empty:
-        organic_box = df_to_html_box_extra(
+    # ✅ 03을 2개 나란히(가로폭 줄여 2열로)
+    if (organic_engines_df is not None and not organic_engines_df.empty) or (organic_detail_df is not None and not organic_detail_df.empty):
+        left_box = df_to_html_box_extra(
             "오가닉 검색 유입 (검색엔진별)",
             "어제 Organic Search 유입을 검색엔진(소스)별로 나눈 데이터입니다.",
-            organic_engines_df,
+            organic_engines_df if organic_engines_df is not None else pd.DataFrame(),
             max_rows=10,
+            nowrap_cols=["검색엔진"],
+        )
+        right_box = df_to_html_box_extra(
+            "오가닉 서치 상세 (Source / Medium)",
+            "Organic Search를 Source/Medium 조합으로 더 자세히 쪼갠 데이터입니다.",
+            organic_detail_df if organic_detail_df is not None else pd.DataFrame(),
+            max_rows=15,
+            nowrap_cols=["Source / Medium"],
         )
         blocks.append(f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
   03 · ORGANIC SEARCH DETAIL
 </div>
-{organic_box}""")
-
-    if organic_detail_df is not None and not organic_detail_df.empty:
-        organic_detail_box = df_to_html_box_extra(
-            "오가닉 서치 상세 (Source / Medium)",
-            "Organic Search를 Source/Medium 조합으로 더 자세히 쪼갠 데이터입니다.",
-            organic_detail_df,
-            max_rows=15,
-        )
-        blocks.append(organic_detail_box)
+<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+  <tr>
+    <td width="45%" valign="top" style="padding:4px 6px 8px 0;">{left_box}</td>
+    <td width="55%" valign="top" style="padding:4px 0 8px 6px;">{right_box}</td>
+  </tr>
+</table>""")
 
     ops_cards: List[str] = []
 
@@ -1014,6 +1049,7 @@ def build_extra_sections_html(
             "어제 기준 쿠폰별 구매/매출 기여 (not set 제외).",
             coupon_df,
             max_rows=12,
+            nowrap_cols=["쿠폰"],
         ))
 
     if search_zero_buy_df is not None and not search_zero_buy_df.empty:
@@ -1022,6 +1058,7 @@ def build_extra_sections_html(
             "검색수는 높은데 구매가 0인 키워드 — 결과/필터/상품구성 점검 우선순위.",
             search_zero_buy_df,
             max_rows=12,
+            nowrap_cols=["키워드"],
         ))
 
     if device_split_df is not None and not device_split_df.empty:
@@ -1030,6 +1067,7 @@ def build_extra_sections_html(
             "deviceCategory별 UV/구매/매출/CVR/AOV 요약.",
             device_split_df,
             max_rows=10,
+            nowrap_cols=["디바이스"],
         ))
 
     if device_funnel_df is not None and not device_funnel_df.empty:
@@ -1038,6 +1076,7 @@ def build_extra_sections_html(
             "eventCount 기준 PDP→Cart / Cart→Checkout / Checkout→Purchase.",
             device_funnel_df,
             max_rows=10,
+            nowrap_cols=["디바이스"],
         ))
 
     if ops_cards:
@@ -1054,7 +1093,7 @@ def build_extra_sections_html(
         blocks.append(f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
   04 · OPS CHECK (COUPON · SEARCH · DEVICE)
 </div>
-<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px; border-collapse:collapse;">
 {''.join(grid_rows)}
 </table>""")
 
@@ -1077,52 +1116,43 @@ def compose_html_daily(
     products_hiconv_df,
     pages_df,
 ):
-    # ---- 섹션2용: 작은 카드 ----
-    def df_to_html_box(title, subtitle, df, max_rows=None):
+    def df_to_html_box(title, subtitle, df, max_rows=None, nowrap_cols: Optional[List[str]] = None):
         if df is None or df.empty:
             table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
         else:
+            d = df.copy()
             if max_rows is not None:
-                df = df.head(max_rows)
-            inner = df.to_html(index=False, border=0, justify="left", escape=False)
-            inner = inner.replace('<table border="0" class="dataframe">', '<table style="width:100%; border-collapse:collapse; font-size:10px;">')
-            inner = inner.replace('<tr style="text-align: right;">', '<tr style="background:#f4f6fb; text-align:left;">')
-            inner = inner.replace("<th>", "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555;\">")
-            inner = inner.replace("<td>", "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333;\">")
-            table_html = inner
+                d = d.head(max_rows)
+            if nowrap_cols:
+                d = _apply_no_wrap_cols(d, nowrap_cols)
+            table_html = _df_to_styled_table_html(d)
 
-        # ✅ 카드 “칸 넓음” 개선: padding/min-height 축소
         return f"""
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#ffffff; border-radius:12px;
-              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
-              padding:6px 8px; border-collapse:separate;">
-  <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
-      {title}
-    </div>
-    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
-      {subtitle}
-    </div>
-    {table_html}
-  </td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}">
+  <tr>
+    <td style="padding:8px 10px;">
+      <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
+        {title}
+      </div>
+      <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.35;">
+        {subtitle}
+      </div>
+      {table_html}
+    </td>
+  </tr>
 </table>
 """
 
-    # ---- 시간대별 카드: 트래픽 막대 + 매출 막대 ----
     def build_hourly_card(df):
         if df is None or df.empty:
             body_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
             return f"""
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#ffffff; border-radius:12px;
-              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
-              padding:10px 12px; border-collapse:separate; margin-top:10px;">
-  <tr><td>
+<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}; margin-top:10px;">
+  <tr><td style="padding:10px 12px;">
     <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
       시간대별 트래픽 & 매출 (막대)
     </div>
-    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
+    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.35;">
       어제 0~23시 기준 — 위에는 트래픽(세션), 아래에는 매출을 시간대별 막대그래프로 비교합니다.
     </div>
     {body_html}
@@ -1144,7 +1174,7 @@ def compose_html_daily(
         max_bar_height = 80
 
         labels_row = "".join(
-            f"<td style='font-size:9px; color:#666; padding-top:2px; text-align:center;'>{int(h):02d}</td>"
+            f"<td style='font-size:9px; color:#666; padding-top:2px; text-align:center; white-space:nowrap;'>{int(h):02d}</td>"
             for h in hours
         )
 
@@ -1163,7 +1193,7 @@ def compose_html_daily(
 <div style="font-size:10px; color:#555; margin-bottom:4px;">
   · 트래픽 (세션수, 막대)
 </div>
-<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse;">
+<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse; table-layout:fixed;">
   <tr style="height:{max_bar_height+15}px; vertical-align:bottom;">
     {sess_bar_row}
   </tr>
@@ -1188,7 +1218,7 @@ def compose_html_daily(
 <div style="font-size:10px; color:#555; margin-top:12px; margin-bottom:4px;">
   · 매출 (원, 막대)
 </div>
-<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse;">
+<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse; table-layout:fixed;">
   <tr style="height:{max_bar_height+15}px; vertical-align:bottom;">
     {rev_bar_row}
   </tr>
@@ -1199,15 +1229,12 @@ def compose_html_daily(
 """
 
         return f"""
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#ffffff; border-radius:12px;
-              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
-              padding:10px 12px; border-collapse:separate; margin-top:10px;">
-  <tr><td>
+<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}; margin-top:10px;">
+  <tr><td style="padding:10px 12px;">
     <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
       시간대별 트래픽 & 매출 (막대)
     </div>
-    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
+    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.35;">
       어제 0~23시 기준 — 위에는 트래픽(세션), 아래에는 매출을 시간대별 막대그래프로 비교합니다.
     </div>
     {traffic_chart_html}
@@ -1223,15 +1250,12 @@ def compose_html_daily(
     action_items_html = "".join(f"<li style='margin-bottom:3px;'>{s}</li>" for s in actions_list)
 
     insight_card_html = f"""
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#ffffff; border-radius:14px;
-              border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
-              padding:10px 12px; border-collapse:separate;">
-  <tr><td>
+<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}; border-radius:14px;">
+  <tr><td style="padding:10px 12px;">
     <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:4px;">
       오늘의 인사이트
     </div>
-    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
+    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.55;">
       {insight_items_html}
     </ul>
   </td></tr>
@@ -1239,15 +1263,12 @@ def compose_html_daily(
 """
 
     action_card_html = f"""
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#ffffff; border-radius:14px;
-              border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
-              padding:10px 12px; border-collapse:separate;">
-  <tr><td>
+<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}; border-radius:14px;">
+  <tr><td style="padding:10px 12px;">
     <div style="font-size:11px; font-weight:600; color:#0f766e; margin-bottom:4px;">
       오늘 취할 액션
     </div>
-    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
+    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.55;">
       {action_items_html}
     </ul>
   </td></tr>
@@ -1264,12 +1285,10 @@ def compose_html_daily(
 </table>
 """
 
-    # ✅ 문구/컬럼명 오해 방지
     funnel_counts_box = df_to_html_box(
         "퍼널 전환 (view → cart → checkout → purchase)",
         "단계별 이벤트 수 기준 전환 흐름입니다. (전일 대비는 ‘이벤트 수’ 증감률)",
         funnel_counts_df,
-        max_rows=None,
     )
 
     funnel_rate_box = df_to_html_box(
@@ -1280,15 +1299,14 @@ def compose_html_daily(
                 lambda r: "위험" if r["전환율(%)"] < r["벤치마크(전환 최소)"] else "",
                 axis=1,
             )
-        ),
-        max_rows=None,
+        ) if funnel_rate_df is not None and not funnel_rate_df.empty else funnel_rate_df,
     )
 
     traffic_box = df_to_html_box(
         "채널별 유입 & 오가닉",
         "채널별 UV · 구매수 · 신규 방문자 · CVR입니다. (전일 대비 Δ 포함)",
         traffic_df,
-        max_rows=None,
+        nowrap_cols=["소스"],
     )
 
     pages_box = df_to_html_box(
@@ -1296,6 +1314,7 @@ def compose_html_daily(
         "페이지뷰 기준 상위 페이지입니다.",
         pages_df,
         max_rows=10,
+        nowrap_cols=["페이지"],
     )
 
     products_top_box = df_to_html_box(
@@ -1319,20 +1338,25 @@ def compose_html_daily(
         max_rows=5,
     )
 
+    # ✅ 여기 “세로로 글자 쪼개짐” 방지: 키워드 컬럼 nowrap + (아래 row에서 가로폭 확대)
     search_top_box = df_to_html_box(
         "온사이트 검색 상위 키워드",
         "검색수 기준 상위 키워드와 CVR입니다. (전일 대비 Δ 포함)",
         search_df,
         max_rows=10,
+        nowrap_cols=["키워드"],
     )
 
     hourly_box = build_hourly_card(hourly_df)
 
+    # ✅ 02 레이아웃 조정
+    # - products_hi(조회 적지만 전환 좋은) 가로폭 줄이고
+    # - search_top(온사이트 검색) 가로폭 늘려서 세로 깨짐 방지
     section2_grid_html = f"""
 <div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:20px; margin-bottom:8px;">
   02 · FUNNEL · TRAFFIC · PRODUCT · SEARCH
 </div>
-<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px; border-collapse:collapse;">
   <tr>
     <td width="50%" valign="top" style="padding:4px 6px 6px 0;">{funnel_counts_box}</td>
     <td width="50%" valign="top" style="padding:4px 0 6px 6px;">{funnel_rate_box}</td>
@@ -1346,8 +1370,8 @@ def compose_html_daily(
     <td width="50%" valign="top" style="padding:4px 0 0 6px;">{products_low_box}</td>
   </tr>
   <tr>
-    <td width="50%" valign="top" style="padding:4px 6px 0 0;">{products_hi_box}</td>
-    <td width="50%" valign="top" style="padding:4px 0 0 6px;">{search_top_box}</td>
+    <td width="40%" valign="top" style="padding:4px 6px 0 0;">{products_hi_box}</td>
+    <td width="60%" valign="top" style="padding:4px 0 0 6px;">{search_top_box}</td>
   </tr>
 </table>
 <div>
@@ -1537,7 +1561,6 @@ def send_daily_digest():
     search_prev_df = src_search_day("2daysAgo", limit=100)
 
     funnel_counts_df = _add_delta_cols(curr=funnel_counts_df, prev=funnel_counts_prev_df, key_cols=["단계"], metric_cols=["수"], mode="pct")
-    # ✅ 컬럼명 변경(오해 방지)
     if funnel_counts_df is not None and not funnel_counts_df.empty:
         funnel_counts_df = funnel_counts_df.rename(columns={"수 Δ": "전일 대비(%)"})
 
@@ -1581,7 +1604,6 @@ def send_daily_digest():
         pages_df=pages_df,
     )
 
-    # 이상 감지
     critical_reasons = []
     if kpi["cvr_lw_pct"] <= -CVR_DROP_PPTS:
         critical_reasons.append(f"CVR LW 대비 {CVR_DROP_PPTS}p 이상 하락")
@@ -1595,7 +1617,6 @@ def send_daily_digest():
         body += f"\n\n어제 기준 CVR {kpi['cvr_today']:.2f}%, 매출 {format_money_manwon(kpi['revenue_today'])}, UV {kpi['uv_today']:,}명."
         send_critical_alert("⚠️ [Critical] Columbia Daily 지표 이상 감지", body)
 
-    # 02 아래 추가 섹션 삽입
     extra_html = build_extra_sections_html(
         organic_engines_df=organic_engines_df,
         organic_detail_df=organic_detail_df,
