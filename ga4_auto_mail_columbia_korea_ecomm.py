@@ -2809,4 +2809,3 @@ def build_extra_sections_html(
 
     return "\n\n".join(blocks)
 '''
-out_path, os.path.getsize(out_path)
