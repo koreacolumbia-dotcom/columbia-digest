@@ -711,8 +711,11 @@ def _add_delta_cols(curr: pd.DataFrame, prev: pd.DataFrame, key_cols: list, metr
     """
     if curr is None or curr.empty:
         return curr
+
+    out = curr.copy()
+
+    # prev 없으면 Δ 빈 컬럼만 추가
     if prev is None or prev.empty:
-        out = curr.copy()
         for m in metric_cols:
             out[f"{m} Δ"] = ""
         return out
@@ -720,31 +723,31 @@ def _add_delta_cols(curr: pd.DataFrame, prev: pd.DataFrame, key_cols: list, metr
     c = curr.copy()
     p = prev.copy()
 
-    for m in metric_cols:
-        if m in c.columns:
-            c[m] = pd.to_numeric(c[m], errors="coerce")
-        if m in p.columns:
-            p[m] = pd.to_numeric(p[m], errors="coerce")
-
-    p = p[key_cols + [m for m in metric_cols if m in p.columns]].copy()
-    p_cols_renamed = {m: f"{m}__prev" for m in metric_cols if m in p.columns}
-    p.rename(columns=p_cols_renamed, inplace=True)
+    # prev 쪽에 필요한 컬럼만 남기고 __prev로 rename
+    keep_prev = [m for m in metric_cols if m in p.columns]
+    p = p[key_cols + keep_prev].copy()
+    p.rename(columns={m: f"{m}__prev" for m in keep_prev}, inplace=True)
 
     out = c.merge(p, on=key_cols, how="left")
 
     for m in metric_cols:
         prev_col = f"{m}__prev"
-        if prev_col not in out.columns or m not in out.columns:
+        if m not in out.columns or prev_col not in out.columns:
             out[f"{m} Δ"] = ""
             continue
 
+        # ✅ merge 이후에도 다시 숫자 캐스팅(중요)
+        out[m] = pd.to_numeric(out[m], errors="coerce")
+        out[prev_col] = pd.to_numeric(out[prev_col], errors="coerce")
+
         if mode == "pp":
-            delta = (out[m] - out[prev_col]).round(2)
-            out[f"{m} Δ"] = delta.map(lambda x: "" if pd.isna(x) else f"{x:+.2f}p")
+            delta = (out[m] - out[prev_col]).astype(float)
+            out[f"{m} Δ"] = delta.round(2).map(lambda x: "" if pd.isna(x) else f"{x:+.2f}p")
         else:
-            denom = out[prev_col].replace(0, pd.NA)
-            delta = ((out[m] - out[prev_col]) / denom * 100).round(1)
-            out[f"{m} Δ"] = delta.map(lambda x: "" if pd.isna(x) else f"{x:+.1f}%")
+            # ✅ pd.NA 대신 np.nan (object dtype 방지)
+            denom = out[prev_col].astype(float).replace(0.0, np.nan)
+            delta = ((out[m].astype(float) - out[prev_col].astype(float)) / denom * 100.0)
+            out[f"{m} Δ"] = delta.round(1).map(lambda x: "" if pd.isna(x) else f"{x:+.1f}%")
 
         out.drop(columns=[prev_col], inplace=True)
 
