@@ -19,6 +19,7 @@ Daily eCommerce Performance Digest (GA4 + HTML Mail)
 import os
 import smtplib
 import pandas as pd
+import numpy as np
 from typing import Dict, List, Optional
 
 from email.mime.multipart import MIMEMultipart
