@@ -613,6 +613,9 @@ def src_funnel_by_device_yesterday() -> pd.DataFrame:
         index="deviceCategory", columns="eventName", values="eventCount",
         aggfunc="sum", fill_value=0
     ).reset_index()
+
+    pivot.columns.name = None
+    pivot = pivot.reset_index()
     pivot.rename(columns={"deviceCategory": "디바이스"}, inplace=True)
 
     def rate(a, b):
