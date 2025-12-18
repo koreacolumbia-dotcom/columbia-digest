@@ -1096,7 +1096,7 @@ def compose_html_daily(
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
-              padding:6px 8px; border-collapse:separate; min-height:140px;">
+              padding:6px 8px; border-collapse:separate;">
   <tr><td>
     <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
       {title}
