@@ -12,10 +12,14 @@ Daily eCommerce Performance Digest (GA4 + HTML Mail)
 [Hotfix]
 - pandas TypeError: Expected numeric dtype, got object -> _add_delta_cols() numeric casting 강화
 - 02 카드 문구/컬럼명 오해 방지(수Δ -> 전일 대비(%))
-- ✅ 카드 여백/높이 축소 + 카드 크기 균형 맞춤(최대한 “컨텐츠 높이” 기반)
-- ✅ 02: "조회는 적지만 구매전환이 좋은 상품" 가로폭 축소 / "온사이트 검색 상위 키워드" 가로폭 확대
-- ✅ 03: "오가닉 검색 유입(검색엔진별)" + "오가닉 서치 상세(Source/Medium)" 2개 나란히 배치
+- 02 카드 여백/높이(칸 넓음) 축소
 - DC 크롤링/VOC 코드 전체 제거
+
+[2025-12-18 layout patch]
+- 01 KPI 카드 9개(3x3) 복구
+- 02 섹션: products_hi 폭 축소 / search_top 폭 확대
+- 03 오가닉: 엔진별 + Source/Medium 2개를 한 줄(50:50)
+- 표 텍스트 세로 깨짐 방지(word-break/white-space/overflow-wrap)
 """
 
 import os
@@ -47,7 +51,6 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 
-# ✅ 기본 수신자
 DAILY_RECIPIENTS = [
     e.strip()
     for e in os.getenv("DAILY_RECIPIENTS", "korea_Ecom@columbia.com").split(",")
@@ -56,12 +59,10 @@ DAILY_RECIPIENTS = [
 
 ALERT_RECIPIENT = os.getenv("ALERT_RECIPIENT", "").strip()
 
-# 임계값 (알림 트리거)
 CVR_DROP_PPTS = float(os.getenv("CVR_DROP_PPTS", "0.5"))
 REVENUE_DROP_PCT = float(os.getenv("REVENUE_DROP_PCT", "15"))
 UV_DROP_PCT = float(os.getenv("UV_DROP_PCT", "20"))
 
-# 퍼널 벤치마크 (전환율 기준)
 PDP_ADD2CART_MIN_PCT = float(os.getenv("PDP_ADD2CART_MIN_PCT", "6"))
 CART2CHK_MIN_PCT = float(os.getenv("CART2CHK_MIN_PCT", "45"))
 CHK2BUY_MIN_PCT = float(os.getenv("CHK2BUY_MIN_PCT", "60"))
@@ -79,7 +80,6 @@ HTML_SCREENSHOT_WIDTH = int(os.getenv("DIGEST_IMG_WIDTH", "1200"))
 # =====================================================================
 
 def pct_change(curr, prev):
-    """(curr - prev)/prev * 100 (%). prev가 0이면 0."""
     try:
         prev = float(prev)
         curr = float(curr)
@@ -115,7 +115,6 @@ def format_money_manwon(won):
 
 
 def format_date_label(ga_date_str):
-    """GA4 date(YYYYMMDD or 20251121.0) → 'YYYY-MM-DD'"""
     try:
         s = str(ga_date_str)
         if "." in s:
@@ -127,10 +126,6 @@ def format_date_label(ga_date_str):
 
 
 def _to_numeric_series(s: pd.Series) -> pd.Series:
-    """
-    object dtype 방지용 강제 numeric 변환.
-    "1,234" 같은 문자열도 처리.
-    """
     if s is None:
         return s
     try:
@@ -154,7 +149,6 @@ def _smtp_server_and_port():
 
 
 def html_to_jpeg(html_body: str, out_path: str = "/tmp/columbia_daily_digest.jpg") -> str:
-    """HTML 문자열을 JPEG 이미지로 변환 (pyppeteer + Chromium)."""
     if not ENABLE_INLINE_JPEG:
         return ""
     try:
@@ -187,7 +181,6 @@ def html_to_jpeg(html_body: str, out_path: str = "/tmp/columbia_daily_digest.jpg
 
 
 def send_email_html(subject: str, html_body: str, recipients, jpeg_path: str = ""):
-    """HTML 또는 JPEG 버전을 메일로 발송."""
     if isinstance(recipients, str):
         recipients = [recipients]
     if not recipients:
@@ -344,8 +337,8 @@ def src_funnel_day(day_keyword: str):
     base = df.set_index("단계")["수"]
     view_cnt = int(base.get("view_item", 0))
     cart_cnt = int(base.get("add_to_cart", 0))
-    chk_cnt = int(base.get("begin_checkout", 0))
-    buy_cnt = int(base.get("purchase", 0))
+    chk_cnt  = int(base.get("begin_checkout", 0))
+    buy_cnt  = int(base.get("purchase", 0))
 
     data = [
         {"구간": "상품 상세 → 장바구니", "기준": "PDP → Cart",
@@ -713,18 +706,10 @@ def src_top_pages_ga(limit: int = 10) -> pd.DataFrame:
 
 
 # =====================================================================
-# 4.5) 전일 대비 Δ merge 유틸 (핵심 오류 수정)
+# 4.5) 전일 대비 Δ merge 유틸
 # =====================================================================
 
 def _add_delta_cols(curr: pd.DataFrame, prev: pd.DataFrame, key_cols: list, metric_cols: list, mode: str = "pct"):
-    """
-    curr/prev를 key_cols로 merge해서 metric_cols 기준 Δ 컬럼을 붙임.
-    mode:
-      - "pct": (curr-prev)/prev*100 (%)
-      - "pp" : (curr-prev) (%p 같은 절대차)
-
-    ✅ Hotfix: merge 후 object dtype 방지 위해 numeric 강제 캐스팅
-    """
     if curr is None or curr.empty:
         return curr
 
@@ -828,7 +813,7 @@ def build_core_kpi():
     ch_prev = _channel_uv_for_day("8daysAgo")
     ch_yoy = _channel_uv_for_day("366daysAgo")
 
-    kpi = {
+    return {
         "date_label": format_date_label(kpi_today["date"]) if kpi_today["date"] else "어제",
 
         "revenue_today": rev_today, "revenue_ld": rev_ld, "revenue_prev": rev_prev, "revenue_yoy": rev_yoy,
@@ -864,7 +849,6 @@ def build_core_kpi():
         "organic_share_lw_pct": pct_change(ch_today["organic_share"], ch_prev["organic_share"]),
         "organic_share_ly_pct": pct_change(ch_today["organic_share"], ch_yoy["organic_share"]),
     }
-    return kpi
 
 
 def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
@@ -943,65 +927,48 @@ def build_actions(kpi, funnel_rate_df, traffic_df, search_df):
 # 6) EXTRA 섹션 HTML 헬퍼
 # =====================================================================
 
-# 공통 카드/테이블 스타일 (메일 클라 호환 우선)
-CARD_TABLE_STYLE = (
-    "background:#ffffff; border-radius:12px; "
-    "border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03); "
-    "border-collapse:separate;"
-)
-
-# 테이블 셀 공통 (세로로 글자 떨어지는 현상 완화)
-TD_STYLE_BASE = "padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333; word-break:keep-all; overflow-wrap:anywhere;"
-TH_STYLE_BASE = "padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555; word-break:keep-all;"
-
-
-def _apply_no_wrap_cols(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
-    """특정 컬럼만 줄바꿈 방지(가로폭 넓힐 때 세로로 쪼개지는 현상 방지)."""
-    if df is None or df.empty or not cols:
-        return df
-    d = df.copy()
-    for c in cols:
-        if c in d.columns:
-            d[c] = d[c].astype(str).map(lambda x: f"<span style='white-space:nowrap;'>{x}</span>")
-    return d
-
-
-def _df_to_styled_table_html(df: pd.DataFrame) -> str:
-    inner = df.to_html(index=False, border=0, justify="left", escape=False)
-    inner = inner.replace(
-        '<table border="0" class="dataframe">',
-        '<table style="width:100%; border-collapse:collapse; font-size:10px; table-layout:auto;">'
+def _table_style_replace(html: str) -> str:
+    """
+    메일 클라이언트에서 글자 세로깨짐/한글 단어 단위 유지.
+    """
+    html = html.replace('<table border="0" class="dataframe">', '<table style="width:100%; border-collapse:collapse; font-size:10px; table-layout:fixed;">')
+    html = html.replace('<tr style="text-align: right;">', '<tr style="background:#f4f6fb; text-align:left;">')
+    html = html.replace(
+        "<th>",
+        "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555;"
+        "word-break:keep-all; white-space:normal; overflow-wrap:anywhere;\">"
     )
-    inner = inner.replace('<tr style="text-align: right;">', '<tr style="background:#f4f6fb; text-align:left;">')
-    inner = inner.replace("<th>", f"<th style=\"{TH_STYLE_BASE}\">")
-    inner = inner.replace("<td>", f"<td style=\"{TD_STYLE_BASE}\">")
-    return inner
+    html = html.replace(
+        "<td>",
+        "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333;"
+        "word-break:keep-all; white-space:normal; overflow-wrap:anywhere;\">"
+    )
+    return html
 
 
-def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: Optional[int] = None,
-                        nowrap_cols: Optional[List[str]] = None) -> str:
+def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: Optional[int] = None) -> str:
     if df is None or df.empty:
         table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
     else:
         d = df.copy()
         if max_rows is not None:
             d = d.head(max_rows)
-        if nowrap_cols:
-            d = _apply_no_wrap_cols(d, nowrap_cols)
-        table_html = _df_to_styled_table_html(d)
+        inner = d.to_html(index=False, border=0, justify="left", escape=False)
+        table_html = _table_style_replace(inner)
 
-    return f"""<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}">
-  <tr>
-    <td style="padding:8px 10px;">
-      <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:3px;">
-        {title}
-      </div>
-      <div style="font-size:10px; color:#777; margin-bottom:6px; line-height:1.35;">
-        {subtitle}
-      </div>
-      {table_html}
-    </td>
-  </tr>
+    return f"""<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:12px;
+              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
+              padding:8px 10px; border-collapse:separate;">
+  <tr><td>
+    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:3px;">
+      {title}
+    </div>
+    <div style="font-size:10px; color:#777; margin-bottom:6px; line-height:1.35;">
+      {subtitle}
+    </div>
+    {table_html}
+  </td></tr>
 </table>"""
 
 
@@ -1015,32 +982,40 @@ def build_extra_sections_html(
 ) -> str:
     blocks: List[str] = []
 
-    # ✅ 03을 2개 나란히(가로폭 줄여 2열로)
-    if (organic_engines_df is not None and not organic_engines_df.empty) or (organic_detail_df is not None and not organic_detail_df.empty):
-        left_box = df_to_html_box_extra(
+    # ✅ 03: 두 카드(엔진별/소스미디엄) 한 줄(50:50)
+    organic_cards = []
+    if organic_engines_df is not None and not organic_engines_df.empty:
+        organic_cards.append(df_to_html_box_extra(
             "오가닉 검색 유입 (검색엔진별)",
             "어제 Organic Search 유입을 검색엔진(소스)별로 나눈 데이터입니다.",
-            organic_engines_df if organic_engines_df is not None else pd.DataFrame(),
+            organic_engines_df,
             max_rows=10,
-            nowrap_cols=["검색엔진"],
-        )
-        right_box = df_to_html_box_extra(
+        ))
+    else:
+        organic_cards.append("")
+
+    if organic_detail_df is not None and not organic_detail_df.empty:
+        organic_cards.append(df_to_html_box_extra(
             "오가닉 서치 상세 (Source / Medium)",
             "Organic Search를 Source/Medium 조합으로 더 자세히 쪼갠 데이터입니다.",
-            organic_detail_df if organic_detail_df is not None else pd.DataFrame(),
+            organic_detail_df,
             max_rows=15,
-            nowrap_cols=["Source / Medium"],
-        )
+        ))
+    else:
+        organic_cards.append("")
+
+    if any(c.strip() for c in organic_cards):
         blocks.append(f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
   03 · ORGANIC SEARCH DETAIL
 </div>
-<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
   <tr>
-    <td width="45%" valign="top" style="padding:4px 6px 8px 0;">{left_box}</td>
-    <td width="55%" valign="top" style="padding:4px 0 8px 6px;">{right_box}</td>
+    <td width="50%" valign="top" style="padding:4px 6px 8px 0;">{organic_cards[0]}</td>
+    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{organic_cards[1]}</td>
   </tr>
 </table>""")
 
+    # 04 OPS
     ops_cards: List[str] = []
 
     if coupon_df is not None and not coupon_df.empty:
@@ -1049,7 +1024,6 @@ def build_extra_sections_html(
             "어제 기준 쿠폰별 구매/매출 기여 (not set 제외).",
             coupon_df,
             max_rows=12,
-            nowrap_cols=["쿠폰"],
         ))
 
     if search_zero_buy_df is not None and not search_zero_buy_df.empty:
@@ -1058,7 +1032,6 @@ def build_extra_sections_html(
             "검색수는 높은데 구매가 0인 키워드 — 결과/필터/상품구성 점검 우선순위.",
             search_zero_buy_df,
             max_rows=12,
-            nowrap_cols=["키워드"],
         ))
 
     if device_split_df is not None and not device_split_df.empty:
@@ -1067,7 +1040,6 @@ def build_extra_sections_html(
             "deviceCategory별 UV/구매/매출/CVR/AOV 요약.",
             device_split_df,
             max_rows=10,
-            nowrap_cols=["디바이스"],
         ))
 
     if device_funnel_df is not None and not device_funnel_df.empty:
@@ -1076,7 +1048,6 @@ def build_extra_sections_html(
             "eventCount 기준 PDP→Cart / Cart→Checkout / Checkout→Purchase.",
             device_funnel_df,
             max_rows=10,
-            nowrap_cols=["디바이스"],
         ))
 
     if ops_cards:
@@ -1093,7 +1064,7 @@ def build_extra_sections_html(
         blocks.append(f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
   04 · OPS CHECK (COUPON · SEARCH · DEVICE)
 </div>
-<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px; border-collapse:collapse;">
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
 {''.join(grid_rows)}
 </table>""")
 
@@ -1116,43 +1087,47 @@ def compose_html_daily(
     products_hiconv_df,
     pages_df,
 ):
-    def df_to_html_box(title, subtitle, df, max_rows=None, nowrap_cols: Optional[List[str]] = None):
+    def df_to_html_box(title, subtitle, df, max_rows=None):
         if df is None or df.empty:
             table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
         else:
             d = df.copy()
             if max_rows is not None:
                 d = d.head(max_rows)
-            if nowrap_cols:
-                d = _apply_no_wrap_cols(d, nowrap_cols)
-            table_html = _df_to_styled_table_html(d)
+            inner = d.to_html(index=False, border=0, justify="left", escape=False)
+            table_html = _table_style_replace(inner)
 
         return f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}">
-  <tr>
-    <td style="padding:8px 10px;">
-      <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
-        {title}
-      </div>
-      <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.35;">
-        {subtitle}
-      </div>
-      {table_html}
-    </td>
-  </tr>
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:12px;
+              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
+              padding:6px 8px; border-collapse:separate;">
+  <tr><td>
+    <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
+      {title}
+    </div>
+    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
+      {subtitle}
+    </div>
+    {table_html}
+  </td></tr>
 </table>
 """
 
+    # ---- 시간대별 카드 (원본 유지) ----
     def build_hourly_card(df):
         if df is None or df.empty:
             body_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
             return f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}; margin-top:10px;">
-  <tr><td style="padding:10px 12px;">
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:12px;
+              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
+              padding:10px 12px; border-collapse:separate; margin-top:10px;">
+  <tr><td>
     <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
       시간대별 트래픽 & 매출 (막대)
     </div>
-    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.35;">
+    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
       어제 0~23시 기준 — 위에는 트래픽(세션), 아래에는 매출을 시간대별 막대그래프로 비교합니다.
     </div>
     {body_html}
@@ -1174,7 +1149,7 @@ def compose_html_daily(
         max_bar_height = 80
 
         labels_row = "".join(
-            f"<td style='font-size:9px; color:#666; padding-top:2px; text-align:center; white-space:nowrap;'>{int(h):02d}</td>"
+            f"<td style='font-size:9px; color:#666; padding-top:2px; text-align:center;'>{int(h):02d}</td>"
             for h in hours
         )
 
@@ -1193,7 +1168,7 @@ def compose_html_daily(
 <div style="font-size:10px; color:#555; margin-bottom:4px;">
   · 트래픽 (세션수, 막대)
 </div>
-<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse; table-layout:fixed;">
+<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse;">
   <tr style="height:{max_bar_height+15}px; vertical-align:bottom;">
     {sess_bar_row}
   </tr>
@@ -1218,7 +1193,7 @@ def compose_html_daily(
 <div style="font-size:10px; color:#555; margin-top:12px; margin-bottom:4px;">
   · 매출 (원, 막대)
 </div>
-<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse; table-layout:fixed;">
+<table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse;">
   <tr style="height:{max_bar_height+15}px; vertical-align:bottom;">
     {rev_bar_row}
   </tr>
@@ -1229,12 +1204,15 @@ def compose_html_daily(
 """
 
         return f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}; margin-top:10px;">
-  <tr><td style="padding:10px 12px;">
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:12px;
+              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
+              padding:10px 12px; border-collapse:separate; margin-top:10px;">
+  <tr><td>
     <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
       시간대별 트래픽 & 매출 (막대)
     </div>
-    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.35;">
+    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
       어제 0~23시 기준 — 위에는 트래픽(세션), 아래에는 매출을 시간대별 막대그래프로 비교합니다.
     </div>
     {traffic_chart_html}
@@ -1250,12 +1228,15 @@ def compose_html_daily(
     action_items_html = "".join(f"<li style='margin-bottom:3px;'>{s}</li>" for s in actions_list)
 
     insight_card_html = f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}; border-radius:14px;">
-  <tr><td style="padding:10px 12px;">
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:14px;
+              border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
+              padding:10px 12px; border-collapse:separate;">
+  <tr><td>
     <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:4px;">
       오늘의 인사이트
     </div>
-    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.55;">
+    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
       {insight_items_html}
     </ul>
   </td></tr>
@@ -1263,12 +1244,15 @@ def compose_html_daily(
 """
 
     action_card_html = f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="{CARD_TABLE_STYLE}; border-radius:14px;">
-  <tr><td style="padding:10px 12px;">
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:14px;
+              border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
+              padding:10px 12px; border-collapse:separate;">
+  <tr><td>
     <div style="font-size:11px; font-weight:600; color:#0f766e; margin-bottom:4px;">
       오늘 취할 액션
     </div>
-    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.55;">
+    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
       {action_items_html}
     </ul>
   </td></tr>
@@ -1289,6 +1273,7 @@ def compose_html_daily(
         "퍼널 전환 (view → cart → checkout → purchase)",
         "단계별 이벤트 수 기준 전환 흐름입니다. (전일 대비는 ‘이벤트 수’ 증감률)",
         funnel_counts_df,
+        max_rows=None,
     )
 
     funnel_rate_box = df_to_html_box(
@@ -1299,14 +1284,15 @@ def compose_html_daily(
                 lambda r: "위험" if r["전환율(%)"] < r["벤치마크(전환 최소)"] else "",
                 axis=1,
             )
-        ) if funnel_rate_df is not None and not funnel_rate_df.empty else funnel_rate_df,
+        ),
+        max_rows=None,
     )
 
     traffic_box = df_to_html_box(
         "채널별 유입 & 오가닉",
         "채널별 UV · 구매수 · 신규 방문자 · CVR입니다. (전일 대비 Δ 포함)",
         traffic_df,
-        nowrap_cols=["소스"],
+        max_rows=None,
     )
 
     pages_box = df_to_html_box(
@@ -1314,7 +1300,6 @@ def compose_html_daily(
         "페이지뷰 기준 상위 페이지입니다.",
         pages_df,
         max_rows=10,
-        nowrap_cols=["페이지"],
     )
 
     products_top_box = df_to_html_box(
@@ -1338,25 +1323,21 @@ def compose_html_daily(
         max_rows=5,
     )
 
-    # ✅ 여기 “세로로 글자 쪼개짐” 방지: 키워드 컬럼 nowrap + (아래 row에서 가로폭 확대)
     search_top_box = df_to_html_box(
         "온사이트 검색 상위 키워드",
         "검색수 기준 상위 키워드와 CVR입니다. (전일 대비 Δ 포함)",
         search_df,
         max_rows=10,
-        nowrap_cols=["키워드"],
     )
 
     hourly_box = build_hourly_card(hourly_df)
 
-    # ✅ 02 레이아웃 조정
-    # - products_hi(조회 적지만 전환 좋은) 가로폭 줄이고
-    # - search_top(온사이트 검색) 가로폭 늘려서 세로 깨짐 방지
+    # ✅ 02 섹션 폭 조정: (products_hi 좁게 / search_top 넓게)
     section2_grid_html = f"""
 <div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:20px; margin-bottom:8px;">
   02 · FUNNEL · TRAFFIC · PRODUCT · SEARCH
 </div>
-<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px; border-collapse:collapse;">
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
   <tr>
     <td width="50%" valign="top" style="padding:4px 6px 6px 0;">{funnel_counts_box}</td>
     <td width="50%" valign="top" style="padding:4px 0 6px 6px;">{funnel_rate_box}</td>
@@ -1370,13 +1351,92 @@ def compose_html_daily(
     <td width="50%" valign="top" style="padding:4px 0 0 6px;">{products_low_box}</td>
   </tr>
   <tr>
-    <td width="40%" valign="top" style="padding:4px 6px 0 0;">{products_hi_box}</td>
-    <td width="60%" valign="top" style="padding:4px 0 0 6px;">{search_top_box}</td>
+    <td width="35%" valign="top" style="padding:4px 6px 0 0;">{products_hi_box}</td>
+    <td width="65%" valign="top" style="padding:4px 0 0 6px;">{search_top_box}</td>
   </tr>
 </table>
 <div>
   {hourly_box}
 </div>
+"""
+
+    # ✅ 01 KPI 카드 9개 복구 (3x3)
+    def kpi_card(title, value, ld, lw, ly, ld_pct, lw_pct, ly_pct, suffix=""):
+        return f"""
+<div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
+  <div style="font-size:11px; color:#777; margin-bottom:4px;">{title}</div>
+  <div style="font-size:18px; font-weight:700; margin-bottom:4px; color:#111;">{value}{suffix}</div>
+  <div style="font-size:10px; color:#999; margin-bottom:6px; word-break:keep-all; white-space:normal; overflow-wrap:anywhere;">
+    LD: {ld} · LW: {lw} · LY: {ly}
+  </div>
+  <div>
+    <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {ld_pct}</span>
+    <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {lw_pct}</span>
+    <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {ly_pct}</span>
+  </div>
+</div>
+"""
+
+    kpi_9_html = f"""
+<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:18px; margin-bottom:10px;">
+  01 · EXECUTIVE KPI SNAPSHOT
+</div>
+
+<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate; border-spacing:8px 10px;">
+  <tr>
+    <td width="33.3%" valign="top">
+      {kpi_card("매출 (Revenue)", format_money_manwon(kpi['revenue_today']),
+                format_money_manwon(kpi['revenue_ld']), format_money_manwon(kpi['revenue_prev']), format_money_manwon(kpi['revenue_yoy']),
+                f"{kpi['revenue_ld_pct']:+.1f}%", f"{kpi['revenue_lw_pct']:+.1f}%", f"{kpi['revenue_ly_pct']:+.1f}%")}
+    </td>
+    <td width="33.3%" valign="top">
+      {kpi_card("방문자수 (UV)", f"{kpi['uv_today']:,}명",
+                f"{kpi['uv_ld']:,}명", f"{kpi['uv_prev']:,}명", f"{kpi['uv_yoy']:,}명",
+                f"{kpi['uv_ld_pct']:+.1f}%", f"{kpi['uv_lw_pct']:+.1f}%", f"{kpi['uv_ly_pct']:+.1f}%")}
+    </td>
+    <td width="33.3%" valign="top">
+      {kpi_card("구매수 (Orders)", f"{kpi['orders_today']:,}건",
+                f"{kpi['orders_ld']:,}건", f"{kpi['orders_prev']:,}건", f"{kpi['orders_yoy']:,}건",
+                f"{kpi['orders_ld_pct']:+.1f}%", f"{kpi['orders_lw_pct']:+.1f}%", f"{kpi['orders_ly_pct']:+.1f}%")}
+    </td>
+  </tr>
+
+  <tr>
+    <td width="33.3%" valign="top">
+      {kpi_card("전환율 (CVR)", f"{kpi['cvr_today']:.2f}%",
+                f"{kpi['cvr_ld']:.2f}%", f"{kpi['cvr_prev']:.2f}%", f"{kpi['cvr_yoy']:.2f}%",
+                f"{kpi['cvr_ld_pct']:+.1f}%p", f"{kpi['cvr_lw_pct']:+.1f}%p", f"{kpi['cvr_ly_pct']:+.1f}%p")}
+    </td>
+    <td width="33.3%" valign="top">
+      {kpi_card("객단가 (AOV)", format_money(kpi['aov_today']),
+                format_money(kpi['aov_ld']), format_money(kpi['aov_prev']), format_money(kpi['aov_yoy']),
+                f"{kpi['aov_ld_pct']:+.1f}%", f"{kpi['aov_lw_pct']:+.1f}%", f"{kpi['aov_ly_pct']:+.1f}%")}
+    </td>
+    <td width="33.3%" valign="top">
+      {kpi_card("신규 사용자 (New Users)", f"{kpi['new_today']:,}명",
+                f"{kpi['new_ld']:,}명", f"{kpi['new_prev']:,}명", f"{kpi['new_yoy']:,}명",
+                f"{kpi['new_ld_pct']:+.1f}%", f"{kpi['new_lw_pct']:+.1f}%", f"{kpi['new_ly_pct']:+.1f}%")}
+    </td>
+  </tr>
+
+  <tr>
+    <td width="33.3%" valign="top">
+      {kpi_card("오가닉 UV", f"{kpi['organic_uv_today']:,}명",
+                f"{kpi['organic_uv_ld']:,}명", f"{kpi['organic_uv_prev']:,}명", f"{kpi['organic_uv_yoy']:,}명",
+                f"{kpi['organic_uv_ld_pct']:+.1f}%", f"{kpi['organic_uv_lw_pct']:+.1f}%", f"{kpi['organic_uv_ly_pct']:+.1f}%")}
+    </td>
+    <td width="33.3%" valign="top">
+      {kpi_card("비오가닉 UV", f"{kpi['nonorganic_uv_today']:,}명",
+                f"{kpi['nonorganic_uv_ld']:,}명", f"{kpi['nonorganic_uv_prev']:,}명", f"{kpi['nonorganic_uv_yoy']:,}명",
+                f"{kpi['nonorganic_uv_ld_pct']:+.1f}%", f"{kpi['nonorganic_uv_lw_pct']:+.1f}%", f"{kpi['nonorganic_uv_ly_pct']:+.1f}%")}
+    </td>
+    <td width="33.3%" valign="top">
+      {kpi_card("오가닉 비중", f"{kpi['organic_share_today']:.1f}%",
+                f"{kpi['organic_share_ld']:.1f}%", f"{kpi['organic_share_prev']:.1f}%", f"{kpi['organic_share_yoy']:.1f}%",
+                f"{kpi['organic_share_ld_pct']:+.1f}%", f"{kpi['organic_share_lw_pct']:+.1f}%", f"{kpi['organic_share_ly_pct']:+.1f}%")}
+    </td>
+  </tr>
+</table>
 """
 
     html = f"""<!DOCTYPE html>
@@ -1448,82 +1508,7 @@ def compose_html_daily(
 
 {insight_action_html}
 
-<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:18px; margin-bottom:10px;">
-  01 · EXECUTIVE KPI SNAPSHOT
-</div>
-
-<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate; border-spacing:8px 10px;">
-  <tr>
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">매출 (Revenue)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-          {format_money_manwon(kpi['revenue_today'])}
-        </div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {format_money_manwon(kpi['revenue_ld'])} · LW: {format_money_manwon(kpi['revenue_prev'])} · LY: {format_money_manwon(kpi['revenue_yoy'])}
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">
-            LD {kpi['revenue_ld_pct']:+.1f}%
-          </span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">
-            LW {kpi['revenue_lw_pct']:+.1f}%
-          </span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">
-            LY {kpi['revenue_ly_pct']:+.1f}%
-          </span>
-        </div>
-      </div>
-    </td>
-
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">방문자수 (UV)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-          {kpi['uv_today']:,}명
-        </div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {kpi['uv_ld']:,}명 · LW: {kpi['uv_prev']:,}명 · LY: {kpi['uv_yoy']:,}명
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">
-            LD {kpi['uv_ld_pct']:+.1f}%
-          </span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">
-            LW {kpi['uv_lw_pct']:+.1f}%
-          </span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">
-            LY {kpi['uv_ly_pct']:+.1f}%
-          </span>
-        </div>
-      </div>
-    </td>
-
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">전환율 (CVR)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
-          {kpi['cvr_today']:.2f}%
-        </div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {kpi['cvr_ld']:.2f}% · LW: {kpi['cvr_prev']:.2f}% · LY: {kpi['cvr_yoy']:.2f}%
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">
-            LD {kpi['cvr_ld_pct']:+.1f}%p
-          </span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">
-            LW {kpi['cvr_lw_pct']:+.1f}%p
-          </span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">
-            LY {kpi['cvr_ly_pct']:+.1f}%p
-          </span>
-        </div>
-      </div>
-    </td>
-  </tr>
-</table>
+{kpi_9_html}
 
 {section2_grid_html}
 
@@ -1545,7 +1530,7 @@ def compose_html_daily(
 
 
 # =====================================================================
-# 8) 메인: 데일리 다이제스트 생성 & 발송
+# 8) 메인
 # =====================================================================
 
 def send_daily_digest():
