@@ -4,23 +4,23 @@
 Columbia Sportswear Korea
 Daily eCommerce Performance Digest (GA4 + HTML Mail)
 
-- GA4 KPI/퍼널/채널/상품/페이지/온사이트검색 요약을 데일리 HTML 다이제스트로 메일 발송
-- 01: KPI 9개 카드
-- 02: 퍼널/채널/상품/검색 카드 + 시간대별 트래픽&매출 막대
-- 03: 오가닉 검색엔진별 / Source-Medium 상세
-- 04: 쿠폰/검색0구매/디바이스 스플릿/디바이스별 퍼널
-
 [2025-12-18 patch]
-- 02 카드들 전일(2daysAgo) 대비 증감(Δ) 컬럼 추가(퍼널/채널/검색)
+- 02 카드 전일(2daysAgo) 대비 증감(Δ) 컬럼 추가
 - 오가닉 서치 상세(Source/Medium) 카드 추가
-- (추가요청) 쿠폰/프로모션 요약, 검색 후 구매 0 TOP, 디바이스 스플릿 + 디바이스별 퍼널
+- (추가요청) 1) 쿠폰/프로모션 요약 4) 검색 후 구매 0 TOP 5) 디바이스 스플릿 + 디바이스별 퍼널 추가
+
+[Hotfix]
+- pandas TypeError: Expected numeric dtype, got object -> _add_delta_cols() numeric casting 강화
+- 02 카드 문구/컬럼명 오해 방지(수Δ -> 전일 대비(%))
+- 02 카드 여백/높이(칸 넓음) 축소
+- DC 크롤링/VOC 코드 전체 제거
 """
 
 import os
 import smtplib
 import pandas as pd
-import numpy as np
-from typing import Dict, List, Optional
+
+from typing import List, Dict, Optional
 
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -36,23 +36,21 @@ from google.oauth2 import service_account
 # 0) 환경 변수 / 기본 설정
 # =====================================================================
 
-# GA4
 GA4_PROPERTY_ID = os.getenv("GA4_PROPERTY_ID", "358593394").strip()
 GA_ITEM_VIEW_METRIC = os.getenv("GA_ITEM_VIEW_METRIC", "").strip()
 
-# CRM RAW 파일 경로 (현재 HTML에는 사용 안 하지만 남겨둠)
-_YESTERDAY_LABEL = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-CRM_RAW_PATH = os.getenv("CRM_RAW_PATH", f"/content/orders-{_YESTERDAY_LABEL}.xls").strip()
-
-# 메일 발송 설정
-SMTP_PROVIDER = os.getenv("SMTP_PROVIDER", "gmail").lower()  # "gmail" or "outlook"
+SMTP_PROVIDER = os.getenv("SMTP_PROVIDER", "gmail").lower()
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "koreacolumbia@gmail.com")
-SMTP_PASS = os.getenv("SMTP_PASS", "xxopfytdkxcyhisa")
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 
-# 수신자 (요청대로: 환경변수 대신 고정 리스트 유지 가능)
-DAILY_RECIPIENTS = ["hugh.kang@columbia.com"]
+# ✅ 여기 기본 수신자. (원하면 env DAILY_RECIPIENTS="a@b.com,c@d.com"로 덮어쓰기)
+DAILY_RECIPIENTS = [
+    e.strip()
+    for e in os.getenv("DAILY_RECIPIENTS", "korea_Ecom@columbia.com").split(",")
+    if e.strip()
+]
 
 ALERT_RECIPIENT = os.getenv("ALERT_RECIPIENT", "").strip()
 
@@ -61,7 +59,7 @@ CVR_DROP_PPTS = float(os.getenv("CVR_DROP_PPTS", "0.5"))
 REVENUE_DROP_PCT = float(os.getenv("REVENUE_DROP_PCT", "15"))
 UV_DROP_PCT = float(os.getenv("UV_DROP_PCT", "20"))
 
-# 퍼널 벤치마크 (이탈률 기준)
+# 퍼널 벤치마크 (전환율 기준)
 PDP_ADD2CART_MIN_PCT = float(os.getenv("PDP_ADD2CART_MIN_PCT", "6"))
 CART2CHK_MIN_PCT = float(os.getenv("CART2CHK_MIN_PCT", "45"))
 CHK2BUY_MIN_PCT = float(os.getenv("CHK2BUY_MIN_PCT", "60"))
@@ -70,7 +68,6 @@ SEARCH_CVR_MIN = float(os.getenv("SEARCH_CVR_MIN", "1.0"))
 
 PRODUCT_COLS = ["상품명", "상품조회수", "구매수", "매출(만원)", "CVR(%)"]
 
-# JPEG 인라인 이미지 사용할지 여부 (1이면 사용)
 ENABLE_INLINE_JPEG = os.getenv("DIGEST_INLINE_JPEG", "0") == "1"
 HTML_SCREENSHOT_WIDTH = int(os.getenv("DIGEST_IMG_WIDTH", "1200"))
 
@@ -125,6 +122,20 @@ def format_date_label(ga_date_str):
         return d.strftime("%Y-%m-%d")
     except Exception:
         return str(ga_date_str)
+
+
+def _to_numeric_series(s: pd.Series) -> pd.Series:
+    """
+    object dtype 방지용 강제 numeric 변환.
+    "1,234" 같은 문자열도 처리.
+    """
+    if s is None:
+        return s
+    try:
+        s2 = s.astype(str).str.replace(",", "", regex=False)
+        return pd.to_numeric(s2, errors="coerce")
+    except Exception:
+        return pd.to_numeric(s, errors="coerce")
 
 
 # =====================================================================
@@ -196,7 +207,7 @@ def send_email_html(subject: str, html_body: str, recipients, jpeg_path: str = "
     alt = MIMEMultipart("alternative")
     msg.attach(alt)
 
-    plain_text = "Columbia eCommerce Daily Digest 입니다. 메일이 제대로 보이지 않으면 이미지를 확인해주세요."
+    plain_text = "Columbia eCommerce Daily Digest 입니다. 메일이 제대로 보이지 않으면 HTML/이미지를 확인해주세요."
     alt.attach(MIMEText(plain_text, "plain", "utf-8"))
 
     if jpeg_path and os.path.exists(jpeg_path):
@@ -236,23 +247,20 @@ def send_critical_alert(subject: str, body_text: str):
 # 3) GA4 Client & 공통 run_report
 # =====================================================================
 
-SERVICE_ACCOUNT_JSON = os.getenv("GA4_SERVICE_ACCOUNT_JSON", "")
+SERVICE_ACCOUNT_JSON = os.getenv("GA4_SERVICE_ACCOUNT_JSON", "").strip()
 
 if SERVICE_ACCOUNT_JSON:
     SERVICE_ACCOUNT_FILE = "/tmp/ga4_service_account.json"
     with open(SERVICE_ACCOUNT_FILE, "w", encoding="utf-8") as f:
         f.write(SERVICE_ACCOUNT_JSON)
 else:
-    SERVICE_ACCOUNT_FILE = os.getenv(
-        "GA4_SERVICE_ACCOUNT_FILE",
-        "//content/drive/MyDrive/Colab Notebooks/awesome-aspect-467505-r6-02b6747c0a3b.json",
-    )
+    SERVICE_ACCOUNT_FILE = os.getenv("GA4_SERVICE_ACCOUNT_FILE", "").strip()
 
 
 def ga_client():
     if not GA4_PROPERTY_ID:
         raise SystemExit("GA4_PROPERTY_ID가 비어 있습니다.")
-    if not os.path.exists(SERVICE_ACCOUNT_FILE):
+    if not SERVICE_ACCOUNT_FILE or not os.path.exists(SERVICE_ACCOUNT_FILE):
         raise SystemExit(f"서비스 계정 파일을 찾을 수 없습니다: {SERVICE_ACCOUNT_FILE}")
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
@@ -277,11 +285,6 @@ def ga_run_report(dimensions, metrics, start_date, end_date, limit=None, order_b
     for r in resp.rows:
         rows.append([*[d.value for d in r.dimension_values], *[m.value for m in r.metric_values]])
     df = pd.DataFrame(rows, columns=headers)
-    for c in df.columns:
-        try:
-            df[c] = pd.to_numeric(df[c])
-        except Exception:
-            pass
     return df
 
 
@@ -298,43 +301,49 @@ def src_kpi_one_day(start_date_str: str, end_date_str: str):
     )
     if df.empty:
         return {"date": None, "sessions": 0, "transactions": 0, "purchaseRevenue": 0.0, "newUsers": 0}
+
     row = df.iloc[0]
     return {
-        "date": row["date"],
-        "sessions": safe_int(row["sessions"]),
-        "transactions": safe_int(row["transactions"]),
-        "purchaseRevenue": safe_float(row["purchaseRevenue"]),
-        "newUsers": safe_int(row["newUsers"]),
+        "date": row.get("date"),
+        "sessions": safe_int(row.get("sessions")),
+        "transactions": safe_int(row.get("transactions")),
+        "purchaseRevenue": safe_float(row.get("purchaseRevenue")),
+        "newUsers": safe_int(row.get("newUsers")),
     }
 
 
-def src_funnel_yesterday():
+def src_funnel_day(day_keyword: str):
     df = ga_run_report(
         dimensions=["eventName"],
         metrics=["eventCount"],
-        start_date="yesterday",
-        end_date="yesterday",
+        start_date=day_keyword,
+        end_date=day_keyword,
     )
     want = ["view_item", "add_to_cart", "begin_checkout", "purchase"]
     df = df[df["eventName"].isin(want)].copy()
     df.rename(columns={"eventName": "단계", "eventCount": "수"}, inplace=True)
+
+    if df.empty:
+        return pd.DataFrame(columns=["단계", "수"]), pd.DataFrame(
+            columns=["구간", "기준", "전환율(%)", "이탈율(%)", "벤치마크(전환 최소)"]
+        )
+
+    df["수"] = _to_numeric_series(df["수"]).fillna(0).astype(int)
+
     order = {k: i for i, k in enumerate(want)}
     df["ord"] = df["단계"].map(order)
     df = df.sort_values("ord").drop(columns=["ord"])
 
     def rate(a, b):
-        try:
-            if b == 0:
-                return 0.0
-            return round(a / b * 100, 1)
-        except Exception:
+        if b == 0:
             return 0.0
+        return round(a / b * 100, 1)
 
     base = df.set_index("단계")["수"]
-    view_cnt = base.get("view_item", 0)
-    cart_cnt = base.get("add_to_cart", 0)
-    chk_cnt = base.get("begin_checkout", 0)
-    buy_cnt = base.get("purchase", 0)
+    view_cnt = int(base.get("view_item", 0))
+    cart_cnt = int(base.get("add_to_cart", 0))
+    chk_cnt  = int(base.get("begin_checkout", 0))
+    buy_cnt  = int(base.get("purchase", 0))
 
     data = [
         {"구간": "상품 상세 → 장바구니", "기준": "PDP → Cart",
@@ -351,50 +360,73 @@ def src_funnel_yesterday():
          "벤치마크(전환 최소)": CHK2BUY_MIN_PCT},
     ]
     funnel_rate_df = pd.DataFrame(data)
-    return df, funnel_rate_df
+    return df[["단계", "수"]], funnel_rate_df
 
 
-def src_traffic_yesterday():
+def src_funnel_yesterday():
+    return src_funnel_day("yesterday")
+
+
+def src_traffic_day(day_keyword: str):
     df = ga_run_report(
         dimensions=["sessionDefaultChannelGroup"],
         metrics=["sessions", "transactions", "newUsers"],
-        start_date="yesterday",
-        end_date="yesterday",
+        start_date=day_keyword,
+        end_date=day_keyword,
     )
     if df.empty:
         return pd.DataFrame(columns=["소스", "UV", "구매수", "CVR(%)", "신규 방문자"])
-    df.rename(
-        columns={
-            "sessionDefaultChannelGroup": "소스",
-            "sessions": "UV",
-            "transactions": "구매수",
-            "newUsers": "신규 방문자",
-        },
-        inplace=True,
-    )
-    df["CVR(%)"] = (df["구매수"] / df["UV"] * 100).round(2).fillna(0)
+
+    df.rename(columns={
+        "sessionDefaultChannelGroup": "소스",
+        "sessions": "UV",
+        "transactions": "구매수",
+        "newUsers": "신규 방문자",
+    }, inplace=True)
+
+    df["UV"] = _to_numeric_series(df["UV"]).fillna(0).astype(int)
+    df["구매수"] = _to_numeric_series(df["구매수"]).fillna(0).astype(int)
+    df["신규 방문자"] = _to_numeric_series(df["신규 방문자"]).fillna(0).astype(int)
+
+    df["CVR(%)"] = (df["구매수"] / df["UV"].replace(0, pd.NA) * 100)
+    df["CVR(%)"] = pd.to_numeric(df["CVR(%)"], errors="coerce").fillna(0.0).round(2)
+
     df = df.sort_values("UV", ascending=False)
-    return df
+    return df[["소스", "UV", "구매수", "CVR(%)", "신규 방문자"]]
 
 
-def src_search_yesterday(limit=100):
+def src_traffic_yesterday():
+    return src_traffic_day("yesterday")
+
+
+def src_search_day(day_keyword: str, limit=100):
     df = ga_run_report(
         dimensions=["searchTerm"],
         metrics=["eventCount", "transactions"],
-        start_date="yesterday",
-        end_date="yesterday",
+        start_date=day_keyword,
+        end_date=day_keyword,
         limit=limit,
     )
     if df.empty:
         return pd.DataFrame(columns=["키워드", "검색수", "구매수", "CVR(%)"])
+
     df.rename(columns={"searchTerm": "키워드", "eventCount": "검색수", "transactions": "구매수"}, inplace=True)
-    df["CVR(%)"] = (df["구매수"] / df["검색수"] * 100).round(2).fillna(0)
+
+    df["검색수"] = _to_numeric_series(df["검색수"]).fillna(0).astype(int)
+    df["구매수"] = _to_numeric_series(df["구매수"]).fillna(0).astype(int)
+
+    df["CVR(%)"] = (df["구매수"] / df["검색수"].replace(0, pd.NA) * 100)
+    df["CVR(%)"] = pd.to_numeric(df["CVR(%)"], errors="coerce").fillna(0.0).round(2)
+
     df = df.sort_values("검색수", ascending=False)
-    return df
+    return df[["키워드", "검색수", "구매수", "CVR(%)"]]
+
+
+def src_search_yesterday(limit=100):
+    return src_search_day("yesterday", limit=limit)
 
 
 def src_hourly_revenue_traffic():
-    """어제 기준 시간대별 세션수 / 매출."""
     df = ga_run_report(
         dimensions=["hour"],
         metrics=["sessions", "purchaseRevenue"],
@@ -405,21 +437,18 @@ def src_hourly_revenue_traffic():
         return pd.DataFrame(columns=["시간", "시간_숫자", "세션수", "매출"])
 
     df = df.copy()
-    df["시간_숫자"] = pd.to_numeric(df["hour"], errors="coerce").fillna(0).astype(int)
+    df["시간_숫자"] = _to_numeric_series(df["hour"]).fillna(0).astype(int)
     df["시간"] = df["시간_숫자"].map(lambda h: f"{h:02d}")
+
     df.rename(columns={"sessions": "세션수", "purchaseRevenue": "매출"}, inplace=True)
-    df["세션수"] = pd.to_numeric(df["세션수"], errors="coerce").fillna(0).astype(int)
-    df["매출"] = pd.to_numeric(df["매출"], errors="coerce").fillna(0.0).astype(float)
+    df["세션수"] = _to_numeric_series(df["세션수"]).fillna(0).astype(int)
+    df["매출"] = _to_numeric_series(df["매출"]).fillna(0.0).astype(float)
+
     df = df.sort_values("시간_숫자")
     return df[["시간", "시간_숫자", "세션수", "매출"]]
 
 
 def src_organic_search_engines_yesterday(limit: int = 10) -> pd.DataFrame:
-    """
-    어제 기준 Organic Search 유입을 검색엔진(소스)별로 나눈 데이터.
-    - sessionDefaultChannelGroup = "Organic Search"
-    - sessionSource 기준 그룹화
-    """
     df = ga_run_report(
         dimensions=["sessionDefaultChannelGroup", "sessionSource"],
         metrics=["sessions", "transactions"],
@@ -427,28 +456,26 @@ def src_organic_search_engines_yesterday(limit: int = 10) -> pd.DataFrame:
         end_date="yesterday",
         limit=0,
     )
-    if df is None or df.empty:
+    if df.empty:
         return pd.DataFrame(columns=["검색엔진", "UV", "구매수", "CVR(%)"])
 
-    df = df.copy()
-    df = df[df["sessionDefaultChannelGroup"] == "Organic Search"]
+    df = df[df["sessionDefaultChannelGroup"] == "Organic Search"].copy()
     if df.empty:
         return pd.DataFrame(columns=["검색엔진", "UV", "구매수", "CVR(%)"])
 
     df.rename(columns={"sessionSource": "검색엔진", "sessions": "UV", "transactions": "구매수"}, inplace=True)
+    df["UV"] = _to_numeric_series(df["UV"]).fillna(0).astype(int)
+    df["구매수"] = _to_numeric_series(df["구매수"]).fillna(0).astype(int)
+
     df = df.groupby("검색엔진", as_index=False).agg({"UV": "sum", "구매수": "sum"})
-    df["CVR(%)"] = (df["구매수"] / df["UV"].replace(0, pd.NA)) * 100
-    df["CVR(%)"] = df["CVR(%)"].round(1)
+    df["CVR(%)"] = (df["구매수"] / df["UV"].replace(0, pd.NA) * 100)
+    df["CVR(%)"] = pd.to_numeric(df["CVR(%)"], errors="coerce").fillna(0.0).round(1)
+
     df = df.sort_values("UV", ascending=False).head(limit)
     return df[["검색엔진", "UV", "구매수", "CVR(%)"]]
 
 
 def src_organic_search_detail_source_medium_yesterday(limit: int = 15) -> pd.DataFrame:
-    """
-    어제 기준 Organic Search 상세:
-    - sessionDefaultChannelGroup="Organic Search"
-    - sessionSource / sessionMedium 조합별 UV/구매수/CVR
-    """
     df = ga_run_report(
         dimensions=["sessionDefaultChannelGroup", "sessionSource", "sessionMedium"],
         metrics=["sessions", "transactions"],
@@ -456,30 +483,28 @@ def src_organic_search_detail_source_medium_yesterday(limit: int = 15) -> pd.Dat
         end_date="yesterday",
         limit=0,
     )
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["Source / Medium", "UV", "구매수", "CVR(%)"])
-
-    df = df.copy()
-    df = df[df["sessionDefaultChannelGroup"] == "Organic Search"]
     if df.empty:
         return pd.DataFrame(columns=["Source / Medium", "UV", "구매수", "CVR(%)"])
 
-    df["sessions"] = pd.to_numeric(df["sessions"], errors="coerce").fillna(0).astype(int)
-    df["transactions"] = pd.to_numeric(df["transactions"], errors="coerce").fillna(0).astype(int)
+    df = df[df["sessionDefaultChannelGroup"] == "Organic Search"].copy()
+    if df.empty:
+        return pd.DataFrame(columns=["Source / Medium", "UV", "구매수", "CVR(%)"])
 
+    df["sessions"] = _to_numeric_series(df["sessions"]).fillna(0).astype(int)
+    df["transactions"] = _to_numeric_series(df["transactions"]).fillna(0).astype(int)
     df["Source / Medium"] = df["sessionSource"].astype(str) + " / " + df["sessionMedium"].astype(str)
+
     out = df.groupby("Source / Medium", as_index=False).agg({"sessions": "sum", "transactions": "sum"})
     out.rename(columns={"sessions": "UV", "transactions": "구매수"}, inplace=True)
-    out["CVR(%)"] = (out["구매수"] / out["UV"].replace(0, pd.NA) * 100).round(1)
+
+    out["CVR(%)"] = (out["구매수"] / out["UV"].replace(0, pd.NA) * 100)
+    out["CVR(%)"] = pd.to_numeric(out["CVR(%)"], errors="coerce").fillna(0.0).round(1)
+
     out = out.sort_values("UV", ascending=False).head(limit)
     return out[["Source / Medium", "UV", "구매수", "CVR(%)"]]
 
 
 def src_coupon_performance_yesterday(limit: int = 12) -> pd.DataFrame:
-    """
-    쿠폰/프로모션 요약:
-    - GA4 coupon dimension 기반 (not set 제외)
-    """
     try:
         df = ga_run_report(
             dimensions=["coupon"],
@@ -491,20 +516,19 @@ def src_coupon_performance_yesterday(limit: int = 12) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame(columns=["쿠폰", "구매수", "매출(만원)", "매출비중(%)"])
 
-    if df is None or df.empty:
+    if df.empty:
         return pd.DataFrame(columns=["쿠폰", "구매수", "매출(만원)", "매출비중(%)"])
 
-    df = df.copy()
     df.rename(columns={"coupon": "쿠폰", "transactions": "구매수", "purchaseRevenue": "매출(원)"}, inplace=True)
-    df["구매수"] = pd.to_numeric(df["구매수"], errors="coerce").fillna(0).astype(int)
-    df["매출(원)"] = pd.to_numeric(df["매출(원)"], errors="coerce").fillna(0.0).astype(float)
-
     df["쿠폰"] = df["쿠폰"].astype(str)
     df = df[~df["쿠폰"].str.contains(r"^\(not set\)$", regex=True, na=False)]
     df = df[df["쿠폰"].str.strip() != ""]
 
     if df.empty:
         return pd.DataFrame(columns=["쿠폰", "구매수", "매출(만원)", "매출비중(%)"])
+
+    df["구매수"] = _to_numeric_series(df["구매수"]).fillna(0).astype(int)
+    df["매출(원)"] = _to_numeric_series(df["매출(원)"]).fillna(0.0).astype(float)
 
     total_rev = float(df["매출(원)"].sum())
     df["매출(만원)"] = (df["매출(원)"] / 10_000).round(1)
@@ -515,18 +539,13 @@ def src_coupon_performance_yesterday(limit: int = 12) -> pd.DataFrame:
 
 
 def src_search_zero_purchase_yesterday(min_searches: int = 20, limit: int = 12) -> pd.DataFrame:
-    """
-    검색했지만 구매 0 키워드:
-    - '검색수는 높은데 구매 0' 운영 점검 우선순위
-    """
     df = src_search_yesterday(limit=500)
-    if df is None or df.empty:
+    if df.empty:
         return pd.DataFrame(columns=["키워드", "검색수", "구매수", "CVR(%)"])
 
     d = df.copy()
-    d["검색수"] = pd.to_numeric(d["검색수"], errors="coerce").fillna(0).astype(int)
-    d["구매수"] = pd.to_numeric(d["구매수"], errors="coerce").fillna(0).astype(int)
-    d["CVR(%)"] = pd.to_numeric(d["CVR(%)"], errors="coerce").fillna(0.0).astype(float)
+    d["검색수"] = _to_numeric_series(d["검색수"]).fillna(0).astype(int)
+    d["구매수"] = _to_numeric_series(d["구매수"]).fillna(0).astype(int)
 
     d = d[(d["검색수"] >= min_searches) & (d["구매수"] == 0)]
     if d.empty:
@@ -537,7 +556,6 @@ def src_search_zero_purchase_yesterday(min_searches: int = 20, limit: int = 12) 
 
 
 def src_device_split_yesterday() -> pd.DataFrame:
-    """디바이스 스플릿: deviceCategory별 UV/구매/매출/CVR/AOV"""
     try:
         df = ga_run_report(
             dimensions=["deviceCategory"],
@@ -549,10 +567,9 @@ def src_device_split_yesterday() -> pd.DataFrame:
     except Exception:
         return pd.DataFrame(columns=["디바이스", "UV", "구매수", "매출(만원)", "CVR(%)", "AOV(원)"])
 
-    if df is None or df.empty:
+    if df.empty:
         return pd.DataFrame(columns=["디바이스", "UV", "구매수", "매출(만원)", "CVR(%)", "AOV(원)"])
 
-    df = df.copy()
     df.rename(columns={
         "deviceCategory": "디바이스",
         "sessions": "UV",
@@ -560,23 +577,22 @@ def src_device_split_yesterday() -> pd.DataFrame:
         "purchaseRevenue": "매출(원)",
     }, inplace=True)
 
-    df["UV"] = pd.to_numeric(df["UV"], errors="coerce").fillna(0).astype(int)
-    df["구매수"] = pd.to_numeric(df["구매수"], errors="coerce").fillna(0).astype(int)
-    df["매출(원)"] = pd.to_numeric(df["매출(원)"], errors="coerce").fillna(0.0).astype(float)
+    df["UV"] = _to_numeric_series(df["UV"]).fillna(0).astype(int)
+    df["구매수"] = _to_numeric_series(df["구매수"]).fillna(0).astype(int)
+    df["매출(원)"] = _to_numeric_series(df["매출(원)"]).fillna(0.0).astype(float)
 
     df["매출(만원)"] = (df["매출(원)"] / 10_000).round(1)
-    df["CVR(%)"] = (df["구매수"] / df["UV"].replace(0, pd.NA) * 100).round(2).fillna(0)
-    df["AOV(원)"] = (df["매출(원)"] / df["구매수"].replace(0, pd.NA)).round(0).fillna(0).astype(int)
+    df["CVR(%)"] = (df["구매수"] / df["UV"].replace(0, pd.NA) * 100)
+    df["CVR(%)"] = pd.to_numeric(df["CVR(%)"], errors="coerce").fillna(0.0).round(2)
+
+    df["AOV(원)"] = (df["매출(원)"] / df["구매수"].replace(0, pd.NA))
+    df["AOV(원)"] = pd.to_numeric(df["AOV(원)"], errors="coerce").fillna(0.0).round(0).astype(int)
 
     df = df.sort_values("UV", ascending=False)
     return df[["디바이스", "UV", "구매수", "매출(만원)", "CVR(%)", "AOV(원)"]]
 
 
 def src_funnel_by_device_yesterday() -> pd.DataFrame:
-    """
-    디바이스별 퍼널 전환율(%):
-    - eventCount 기준 view_item/add_to_cart/begin_checkout/purchase
-    """
     want = ["view_item", "add_to_cart", "begin_checkout", "purchase"]
     try:
         df = ga_run_report(
@@ -589,16 +605,19 @@ def src_funnel_by_device_yesterday() -> pd.DataFrame:
     except Exception:
         return pd.DataFrame(columns=["디바이스", "PDP→Cart(%)", "Cart→Checkout(%)", "Checkout→Purchase(%)"])
 
-    if df is None or df.empty:
+    if df.empty:
         return pd.DataFrame(columns=["디바이스", "PDP→Cart(%)", "Cart→Checkout(%)", "Checkout→Purchase(%)"])
 
-    df = df.copy()
     df = df[df["eventName"].isin(want)].copy()
     if df.empty:
         return pd.DataFrame(columns=["디바이스", "PDP→Cart(%)", "Cart→Checkout(%)", "Checkout→Purchase(%)"])
 
-    df["eventCount"] = pd.to_numeric(df["eventCount"], errors="coerce").fillna(0).astype(int)
-    pivot = df.pivot_table(index="deviceCategory", columns="eventName", values="eventCount", aggfunc="sum", fill_value=0).reset_index()
+    df["eventCount"] = _to_numeric_series(df["eventCount"]).fillna(0).astype(int)
+
+    pivot = df.pivot_table(
+        index="deviceCategory", columns="eventName", values="eventCount",
+        aggfunc="sum", fill_value=0
+    ).reset_index()
     pivot.rename(columns={"deviceCategory": "디바이스"}, inplace=True)
 
     def rate(a, b):
@@ -616,7 +635,6 @@ def src_funnel_by_device_yesterday() -> pd.DataFrame:
 
 
 def src_top_products_ga(limit: int = 200) -> pd.DataFrame:
-    """GA4 기준 상품별 조회/구매/매출 요약."""
     base = ga_run_report(
         dimensions=["itemName"],
         metrics=["itemsPurchased", "itemRevenue"],
@@ -627,7 +645,9 @@ def src_top_products_ga(limit: int = 200) -> pd.DataFrame:
     if base.empty:
         return pd.DataFrame(columns=PRODUCT_COLS)
 
-    base = base.rename(columns={"itemName": "상품명", "itemsPurchased": "구매수", "itemRevenue": "매출(원)"})
+    base.rename(columns={"itemName": "상품명", "itemsPurchased": "구매수", "itemRevenue": "매출(원)"}, inplace=True)
+    base["구매수"] = _to_numeric_series(base["구매수"]).fillna(0).astype(int)
+    base["매출(원)"] = _to_numeric_series(base["매출(원)"]).fillna(0.0).astype(float)
 
     views = pd.DataFrame(columns=["상품명", "상품조회수"])
     candidates = []
@@ -648,21 +668,16 @@ def src_top_products_ga(limit: int = 200) -> pd.DataFrame:
             )
             if raw is not None and not raw.empty and metric_name in raw.columns:
                 tmp = raw[["itemName", metric_name]].copy()
-                tmp = tmp.rename(columns={"itemName": "상품명", metric_name: "상품조회수"})
+                tmp.rename(columns={"itemName": "상품명", metric_name: "상품조회수"}, inplace=True)
+                tmp["상품조회수"] = _to_numeric_series(tmp["상품조회수"]).fillna(0).astype(int)
                 views = tmp
                 print(f"[INFO] 상품조회수 메트릭 '{metric_name}' 사용")
                 break
         except Exception as e:
             print(f"[WARN] 상품조회수 메트릭 '{metric_name}' 조회 실패:", e)
 
-    df = base.copy()
-    if not views.empty:
-        df = df.merge(views, on="상품명", how="left")
-    else:
-        df["상품조회수"] = 0
-
-    for col in ["상품조회수", "구매수", "매출(원)"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df = base.merge(views, on="상품명", how="left") if not views.empty else base.assign(상품조회수=0)
+    df["상품조회수"] = _to_numeric_series(df["상품조회수"]).fillna(0).astype(int)
 
     df["매출(만원)"] = (df["매출(원)"] / 10_000).round(1)
 
@@ -675,10 +690,6 @@ def src_top_products_ga(limit: int = 200) -> pd.DataFrame:
 
     df["CVR(%)"] = df.apply(_calc_cvr, axis=1)
     df = df.sort_values(["상품조회수", "매출(원)"], ascending=[False, False]).head(limit)
-
-    df["상품조회수"] = df["상품조회수"].round().astype(int)
-    df["구매수"] = df["구매수"].round().astype(int)
-
     return df[PRODUCT_COLS]
 
 
@@ -692,14 +703,15 @@ def src_top_pages_ga(limit: int = 10) -> pd.DataFrame:
     )
     if df.empty:
         return pd.DataFrame(columns=["페이지", "페이지뷰"])
-    df = df.rename(columns={"pagePathPlusQueryString": "페이지", "screenPageViews": "페이지뷰"})
-    df["페이지뷰"] = pd.to_numeric(df["페이지뷰"], errors="coerce").fillna(0)
+
+    df.rename(columns={"pagePathPlusQueryString": "페이지", "screenPageViews": "페이지뷰"}, inplace=True)
+    df["페이지뷰"] = _to_numeric_series(df["페이지뷰"]).fillna(0).astype(int)
     df = df.sort_values("페이지뷰", ascending=False).head(limit)
-    return df
+    return df[["페이지", "페이지뷰"]]
 
 
 # =====================================================================
-# 4.5) 전일 대비용 소스 + Δ merge 유틸
+# 4.5) 전일 대비 Δ merge 유틸 (핵심 오류 수정)
 # =====================================================================
 
 def _add_delta_cols(curr: pd.DataFrame, prev: pd.DataFrame, key_cols: list, metric_cols: list, mode: str = "pct"):
@@ -708,13 +720,14 @@ def _add_delta_cols(curr: pd.DataFrame, prev: pd.DataFrame, key_cols: list, metr
     mode:
       - "pct": (curr-prev)/prev*100 (%)
       - "pp" : (curr-prev) (%p 같은 절대차)
+
+    ✅ Hotfix: merge 후 object dtype 방지 위해 numeric 강제 캐스팅
     """
     if curr is None or curr.empty:
         return curr
 
     out = curr.copy()
 
-    # prev 없으면 Δ 빈 컬럼만 추가
     if prev is None or prev.empty:
         for m in metric_cols:
             out[f"{m} Δ"] = ""
@@ -723,122 +736,40 @@ def _add_delta_cols(curr: pd.DataFrame, prev: pd.DataFrame, key_cols: list, metr
     c = curr.copy()
     p = prev.copy()
 
-    # prev 쪽에 필요한 컬럼만 남기고 __prev로 rename
-    keep_prev = [m for m in metric_cols if m in p.columns]
-    p = p[key_cols + keep_prev].copy()
-    p.rename(columns={m: f"{m}__prev" for m in keep_prev}, inplace=True)
+    # prev 컬럼 rename
+    keep_prev = key_cols + [m for m in metric_cols if m in p.columns]
+    p = p[keep_prev].copy()
+    p.rename(columns={m: f"{m}__prev" for m in metric_cols if m in p.columns}, inplace=True)
 
     out = c.merge(p, on=key_cols, how="left")
 
+    # ✅ merge 이후에도 숫자열이 object가 될 수 있어 재캐스팅
+    for m in metric_cols:
+        if m in out.columns:
+            out[m] = _to_numeric_series(out[m])
+        prev_col = f"{m}__prev"
+        if prev_col in out.columns:
+            out[prev_col] = _to_numeric_series(out[prev_col])
+
     for m in metric_cols:
         prev_col = f"{m}__prev"
-        if m not in out.columns or prev_col not in out.columns:
+        if prev_col not in out.columns or m not in out.columns:
             out[f"{m} Δ"] = ""
             continue
 
-        # ✅ merge 이후에도 다시 숫자 캐스팅(중요)
-        out[m] = pd.to_numeric(out[m], errors="coerce")
-        out[prev_col] = pd.to_numeric(out[prev_col], errors="coerce")
-
         if mode == "pp":
-            delta = (out[m] - out[prev_col]).astype(float)
-            out[f"{m} Δ"] = delta.round(2).map(lambda x: "" if pd.isna(x) else f"{x:+.2f}p")
+            delta = (out[m] - out[prev_col])
+            delta = pd.to_numeric(delta, errors="coerce").round(2)
+            out[f"{m} Δ"] = delta.map(lambda x: "" if pd.isna(x) else f"{x:+.2f}p")
         else:
-            # ✅ pd.NA 대신 np.nan (object dtype 방지)
-            denom = out[prev_col].astype(float).replace(0.0, np.nan)
-            delta = ((out[m].astype(float) - out[prev_col].astype(float)) / denom * 100.0)
-            out[f"{m} Δ"] = delta.round(1).map(lambda x: "" if pd.isna(x) else f"{x:+.1f}%")
+            denom = out[prev_col].replace(0, pd.NA)
+            delta = (out[m] - out[prev_col]) / denom * 100
+            delta = pd.to_numeric(delta, errors="coerce").round(1)
+            out[f"{m} Δ"] = delta.map(lambda x: "" if pd.isna(x) else f"{x:+.1f}%")
 
         out.drop(columns=[prev_col], inplace=True)
 
     return out
-
-
-def src_funnel_day(day_keyword: str):
-    df = ga_run_report(
-        dimensions=["eventName"],
-        metrics=["eventCount"],
-        start_date=day_keyword,
-        end_date=day_keyword,
-    )
-    want = ["view_item", "add_to_cart", "begin_checkout", "purchase"]
-    df = df[df["eventName"].isin(want)].copy()
-    df.rename(columns={"eventName": "단계", "eventCount": "수"}, inplace=True)
-    order = {k: i for i, k in enumerate(want)}
-    df["ord"] = df["단계"].map(order)
-    df = df.sort_values("ord").drop(columns=["ord"])
-
-    def rate(a, b):
-        try:
-            if b == 0:
-                return 0.0
-            return round(a / b * 100, 1)
-        except Exception:
-            return 0.0
-
-    base = df.set_index("단계")["수"]
-    view_cnt = base.get("view_item", 0)
-    cart_cnt = base.get("add_to_cart", 0)
-    chk_cnt  = base.get("begin_checkout", 0)
-    buy_cnt  = base.get("purchase", 0)
-
-    data = [
-        {"구간": "상품 상세 → 장바구니", "기준": "PDP → Cart",
-         "전환율(%)": rate(cart_cnt, view_cnt),
-         "이탈율(%)": rate(view_cnt - cart_cnt, view_cnt),
-         "벤치마크(전환 최소)": PDP_ADD2CART_MIN_PCT},
-        {"구간": "장바구니 → 체크아웃", "기준": "Cart → Checkout",
-         "전환율(%)": rate(chk_cnt, cart_cnt),
-         "이탈율(%)": rate(cart_cnt - chk_cnt, cart_cnt),
-         "벤치마크(전환 최소)": CART2CHK_MIN_PCT},
-        {"구간": "체크아웃 → 결제완료", "기준": "Checkout → Purchase",
-         "전환율(%)": rate(buy_cnt, chk_cnt),
-         "이탈율(%)": rate(chk_cnt - buy_cnt, chk_cnt),
-         "벤치마크(전환 최소)": CHK2BUY_MIN_PCT},
-    ]
-    funnel_rate_df = pd.DataFrame(data)
-    return df, funnel_rate_df
-
-
-def src_traffic_day(day_keyword: str):
-    df = ga_run_report(
-        dimensions=["sessionDefaultChannelGroup"],
-        metrics=["sessions", "transactions", "newUsers"],
-        start_date=day_keyword,
-        end_date=day_keyword,
-    )
-    if df.empty:
-        return pd.DataFrame(columns=["소스", "UV", "구매수", "CVR(%)", "신규 방문자"])
-    df = df.rename(columns={
-        "sessionDefaultChannelGroup": "소스",
-        "sessions": "UV",
-        "transactions": "구매수",
-        "newUsers": "신규 방문자",
-    })
-    df["UV"] = pd.to_numeric(df["UV"], errors="coerce").fillna(0)
-    df["구매수"] = pd.to_numeric(df["구매수"], errors="coerce").fillna(0)
-    df["신규 방문자"] = pd.to_numeric(df["신규 방문자"], errors="coerce").fillna(0)
-    df["CVR(%)"] = (df["구매수"] / df["UV"].replace(0, pd.NA) * 100).round(2).fillna(0)
-    df = df.sort_values("UV", ascending=False)
-    return df
-
-
-def src_search_day(day_keyword: str, limit=100):
-    df = ga_run_report(
-        dimensions=["searchTerm"],
-        metrics=["eventCount", "transactions"],
-        start_date=day_keyword,
-        end_date=day_keyword,
-        limit=limit,
-    )
-    if df.empty:
-        return pd.DataFrame(columns=["키워드", "검색수", "구매수", "CVR(%)"])
-    df = df.rename(columns={"searchTerm": "키워드", "eventCount": "검색수", "transactions": "구매수"})
-    df["검색수"] = pd.to_numeric(df["검색수"], errors="coerce").fillna(0)
-    df["구매수"] = pd.to_numeric(df["구매수"], errors="coerce").fillna(0)
-    df["CVR(%)"] = (df["구매수"] / df["검색수"].replace(0, pd.NA) * 100).round(2).fillna(0)
-    df = df.sort_values("검색수", ascending=False)
-    return df
 
 
 # =====================================================================
@@ -856,9 +787,9 @@ def _channel_uv_for_day(day_keyword: str):
         return {"total_uv": 0, "organic_uv": 0, "nonorganic_uv": 0, "organic_share": 0.0}
 
     df = df.copy()
-    df["sessions"] = pd.to_numeric(df["sessions"], errors="coerce").fillna(0).astype(int)
-    total_uv = int(df["sessions"].sum())
+    df["sessions"] = _to_numeric_series(df["sessions"]).fillna(0).astype(int)
 
+    total_uv = int(df["sessions"].sum())
     organic_uv = int(df.loc[df["sessionDefaultChannelGroup"] == "Organic Search", "sessions"].sum())
     nonorganic_uv = total_uv - organic_uv
     organic_share = (organic_uv / total_uv * 100) if total_uv > 0 else 0.0
@@ -877,10 +808,10 @@ def build_core_kpi():
     kpi_prev = src_kpi_one_day("8daysAgo", "8daysAgo")
     kpi_yoy = src_kpi_one_day("366daysAgo", "366daysAgo")
 
-    rev_today, rev_ld, rev_prev, rev_yoy = kpi_today["purchaseRevenue"], kpi_ld["purchaseRevenue"], kpi_prev["purchaseRevenue"], kpi_yoy["purchaseRevenue"]
-    uv_today, uv_ld, uv_prev, uv_yoy = kpi_today["sessions"], kpi_ld["sessions"], kpi_prev["sessions"], kpi_yoy["sessions"]
-    ord_today, ord_ld, ord_prev, ord_yoy = kpi_today["transactions"], kpi_ld["transactions"], kpi_prev["transactions"], kpi_yoy["transactions"]
-    new_today, new_ld, new_prev, new_yoy = kpi_today["newUsers"], kpi_ld["newUsers"], kpi_prev["newUsers"], kpi_yoy["newUsers"]
+    rev_today, rev_ld, rev_prev, rev_yoy = (kpi_today["purchaseRevenue"], kpi_ld["purchaseRevenue"], kpi_prev["purchaseRevenue"], kpi_yoy["purchaseRevenue"])
+    uv_today, uv_ld, uv_prev, uv_yoy = (kpi_today["sessions"], kpi_ld["sessions"], kpi_prev["sessions"], kpi_yoy["sessions"])
+    ord_today, ord_ld, ord_prev, ord_yoy = (kpi_today["transactions"], kpi_ld["transactions"], kpi_prev["transactions"], kpi_yoy["transactions"])
+    new_today, new_ld, new_prev, new_yoy = (kpi_today["newUsers"], kpi_ld["newUsers"], kpi_prev["newUsers"], kpi_yoy["newUsers"])
 
     cvr_today = (ord_today / uv_today * 100) if uv_today else 0.0
     cvr_ld = (ord_ld / uv_ld * 100) if uv_ld else 0.0
@@ -901,34 +832,22 @@ def build_core_kpi():
         "date_label": format_date_label(kpi_today["date"]) if kpi_today["date"] else "어제",
 
         "revenue_today": rev_today, "revenue_ld": rev_ld, "revenue_prev": rev_prev, "revenue_yoy": rev_yoy,
-        "revenue_ld_pct": pct_change(rev_today, rev_ld),
-        "revenue_lw_pct": pct_change(rev_today, rev_prev),
-        "revenue_ly_pct": pct_change(rev_today, rev_yoy),
+        "revenue_ld_pct": pct_change(rev_today, rev_ld), "revenue_lw_pct": pct_change(rev_today, rev_prev), "revenue_ly_pct": pct_change(rev_today, rev_yoy),
 
         "uv_today": uv_today, "uv_ld": uv_ld, "uv_prev": uv_prev, "uv_yoy": uv_yoy,
-        "uv_ld_pct": pct_change(uv_today, uv_ld),
-        "uv_lw_pct": pct_change(uv_today, uv_prev),
-        "uv_ly_pct": pct_change(uv_today, uv_yoy),
+        "uv_ld_pct": pct_change(uv_today, uv_ld), "uv_lw_pct": pct_change(uv_today, uv_prev), "uv_ly_pct": pct_change(uv_today, uv_yoy),
 
         "orders_today": ord_today, "orders_ld": ord_ld, "orders_prev": ord_prev, "orders_yoy": ord_yoy,
-        "orders_ld_pct": pct_change(ord_today, ord_ld),
-        "orders_lw_pct": pct_change(ord_today, ord_prev),
-        "orders_ly_pct": pct_change(ord_today, ord_yoy),
+        "orders_ld_pct": pct_change(ord_today, ord_ld), "orders_lw_pct": pct_change(ord_today, ord_prev), "orders_ly_pct": pct_change(ord_today, ord_yoy),
 
         "cvr_today": round(cvr_today, 2), "cvr_ld": round(cvr_ld, 2), "cvr_prev": round(cvr_prev, 2), "cvr_yoy": round(cvr_yoy, 2),
-        "cvr_ld_pct": pct_change(cvr_today, cvr_ld),
-        "cvr_lw_pct": pct_change(cvr_today, cvr_prev),
-        "cvr_ly_pct": pct_change(cvr_today, cvr_yoy),
+        "cvr_ld_pct": pct_change(cvr_today, cvr_ld), "cvr_lw_pct": pct_change(cvr_today, cvr_prev), "cvr_ly_pct": pct_change(cvr_today, cvr_yoy),
 
         "aov_today": aov_today, "aov_ld": aov_ld, "aov_prev": aov_prev, "aov_yoy": aov_yoy,
-        "aov_ld_pct": pct_change(aov_today, aov_ld),
-        "aov_lw_pct": pct_change(aov_today, aov_prev),
-        "aov_ly_pct": pct_change(aov_today, aov_yoy),
+        "aov_ld_pct": pct_change(aov_today, aov_ld), "aov_lw_pct": pct_change(aov_today, aov_prev), "aov_ly_pct": pct_change(aov_today, aov_yoy),
 
         "new_today": new_today, "new_ld": new_ld, "new_prev": new_prev, "new_yoy": new_yoy,
-        "new_ld_pct": pct_change(new_today, new_ld),
-        "new_lw_pct": pct_change(new_today, new_prev),
-        "new_ly_pct": pct_change(new_today, new_yoy),
+        "new_ld_pct": pct_change(new_today, new_ld), "new_lw_pct": pct_change(new_today, new_prev), "new_ly_pct": pct_change(new_today, new_yoy),
 
         "organic_uv_today": ch_today["organic_uv"], "organic_uv_ld": ch_ld["organic_uv"], "organic_uv_prev": ch_prev["organic_uv"], "organic_uv_yoy": ch_yoy["organic_uv"],
         "organic_uv_ld_pct": pct_change(ch_today["organic_uv"], ch_ld["organic_uv"]),
@@ -968,7 +887,7 @@ def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
 
     if traffic_df is not None and not traffic_df.empty:
         top = traffic_df.iloc[0]
-        signals.append(f"유입은 {top['소스']} 채널(UV {int(top['UV']):,}명, CVR {top['CVR(%)']:.2f}%) 비중이 가장 큽니다.")
+        signals.append(f"유입은 {top['소스']} 채널(UV {int(top['UV']):,}명, CVR {float(top['CVR(%)']):.2f}%) 비중이 가장 큽니다.")
 
     if search_df is not None and not search_df.empty:
         bad = search_df[search_df["CVR(%)"] < SEARCH_CVR_MIN]
@@ -982,7 +901,6 @@ def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
     ]
     while len(signals) < 4:
         signals.append(fallback[len(signals) % len(fallback)])
-
     return signals[:4]
 
 
@@ -1018,12 +936,133 @@ def build_actions(kpi, funnel_rate_df, traffic_df, search_df):
 
     while len(actions) < 4:
         actions.append("오늘 눈에 띄는 채널/상품 1~2개를 선정해 소규모 예산으로 실험을 바로 실행합니다.")
-
     return actions[:4]
 
 
 # =====================================================================
-# 6) HTML 템플릿
+# 6) EXTRA 섹션 HTML 헬퍼 (정의 먼저!)
+# =====================================================================
+
+def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: Optional[int] = None) -> str:
+    if df is None or df.empty:
+        table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
+    else:
+        d = df.copy()
+        if max_rows is not None:
+            d = d.head(max_rows)
+
+        # 기본값: dataframe to_html
+        inner = d.to_html(index=False, border=0, justify="left", escape=False)
+        inner = inner.replace('<table border="0" class="dataframe">', '<table style="width:100%; border-collapse:collapse; font-size:10px;">')
+        inner = inner.replace('<tr style="text-align: right;">', '<tr style="background:#f4f6fb; text-align:left;">')
+        inner = inner.replace("<th>", "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555;\">")
+        inner = inner.replace("<td>", "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333;\">")
+        table_html = inner
+
+    return f"""<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:12px;
+              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
+              padding:8px 10px; border-collapse:separate;">
+  <tr><td>
+    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:3px;">
+      {title}
+    </div>
+    <div style="font-size:10px; color:#777; margin-bottom:6px;">
+      {subtitle}
+    </div>
+    {table_html}
+  </td></tr>
+</table>"""
+
+
+def build_extra_sections_html(
+    organic_engines_df: pd.DataFrame | None,
+    organic_detail_df: pd.DataFrame | None,
+    coupon_df: pd.DataFrame | None,
+    search_zero_buy_df: pd.DataFrame | None,
+    device_split_df: pd.DataFrame | None,
+    device_funnel_df: pd.DataFrame | None,
+) -> str:
+    blocks: List[str] = []
+
+    if organic_engines_df is not None and not organic_engines_df.empty:
+        organic_box = df_to_html_box_extra(
+            "오가닉 검색 유입 (검색엔진별)",
+            "어제 Organic Search 유입을 검색엔진(소스)별로 나눈 데이터입니다.",
+            organic_engines_df,
+            max_rows=10,
+        )
+        blocks.append(f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
+  03 · ORGANIC SEARCH DETAIL
+</div>
+{organic_box}""")
+
+    if organic_detail_df is not None and not organic_detail_df.empty:
+        organic_detail_box = df_to_html_box_extra(
+            "오가닉 서치 상세 (Source / Medium)",
+            "Organic Search를 Source/Medium 조합으로 더 자세히 쪼갠 데이터입니다.",
+            organic_detail_df,
+            max_rows=15,
+        )
+        blocks.append(organic_detail_box)
+
+    ops_cards: List[str] = []
+
+    if coupon_df is not None and not coupon_df.empty:
+        ops_cards.append(df_to_html_box_extra(
+            "쿠폰/프로모션 사용 요약",
+            "어제 기준 쿠폰별 구매/매출 기여 (not set 제외).",
+            coupon_df,
+            max_rows=12,
+        ))
+
+    if search_zero_buy_df is not None and not search_zero_buy_df.empty:
+        ops_cards.append(df_to_html_box_extra(
+            "검색했지만 구매 0 키워드",
+            "검색수는 높은데 구매가 0인 키워드 — 결과/필터/상품구성 점검 우선순위.",
+            search_zero_buy_df,
+            max_rows=12,
+        ))
+
+    if device_split_df is not None and not device_split_df.empty:
+        ops_cards.append(df_to_html_box_extra(
+            "디바이스 성과 스플릿",
+            "deviceCategory별 UV/구매/매출/CVR/AOV 요약.",
+            device_split_df,
+            max_rows=10,
+        ))
+
+    if device_funnel_df is not None and not device_funnel_df.empty:
+        ops_cards.append(df_to_html_box_extra(
+            "디바이스별 퍼널 전환율",
+            "eventCount 기준 PDP→Cart / Cart→Checkout / Checkout→Purchase.",
+            device_funnel_df,
+            max_rows=10,
+        ))
+
+    if ops_cards:
+        grid_rows = []
+        for i in range(0, len(ops_cards), 2):
+            left = ops_cards[i]
+            right = ops_cards[i + 1] if i + 1 < len(ops_cards) else ""
+            grid_rows.append(f"""
+  <tr>
+    <td width="50%" valign="top" style="padding:4px 6px 8px 0;">{left}</td>
+    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{right}</td>
+  </tr>
+""")
+        blocks.append(f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
+  04 · OPS CHECK (COUPON · SEARCH · DEVICE)
+</div>
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
+{''.join(grid_rows)}
+</table>""")
+
+    return "\n\n".join(blocks) if blocks else ""
+
+
+# =====================================================================
+# 7) HTML 템플릿
 # =====================================================================
 
 def compose_html_daily(
@@ -1038,31 +1077,39 @@ def compose_html_daily(
     products_hiconv_df,
     pages_df,
 ):
+    # ---- 섹션2용: 작은 카드 ----
     def df_to_html_box(title, subtitle, df, max_rows=None):
         if df is None or df.empty:
             table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
         else:
-            d = df.head(max_rows) if max_rows is not None else df
-            inner = d.to_html(index=False, border=0, justify="left", escape=False)
+            if max_rows is not None:
+                df = df.head(max_rows)
+            inner = df.to_html(index=False, border=0, justify="left", escape=False)
             inner = inner.replace('<table border="0" class="dataframe">', '<table style="width:100%; border-collapse:collapse; font-size:10px;">')
             inner = inner.replace('<tr style="text-align: right;">', '<tr style="background:#f4f6fb; text-align:left;">')
             inner = inner.replace("<th>", "<th style=\"padding:3px 6px; border-bottom:1px solid #e1e4f0; text-align:left; font-weight:600; color:#555;\">")
             inner = inner.replace("<td>", "<td style=\"padding:3px 6px; border-bottom:1px solid #f1f3fa; text-align:left; color:#333;\">")
             table_html = inner
 
+        # ✅ 카드 “칸 넓음” 개선: padding/min-height 축소
         return f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
-              padding:8px 10px; border-collapse:separate; min-height:180px;">
+              padding:6px 8px; border-collapse:separate; min-height:140px;">
   <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">{title}</div>
-    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">{subtitle}</div>
+    <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
+      {title}
+    </div>
+    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
+      {subtitle}
+    </div>
     {table_html}
   </td></tr>
 </table>
 """
 
+    # ---- 시간대별 카드: 트래픽 막대 + 매출 막대 ----
     def build_hourly_card(df):
         if df is None or df.empty:
             body_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
@@ -1072,30 +1119,28 @@ def compose_html_daily(
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
               padding:10px 12px; border-collapse:separate; margin-top:10px;">
   <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">시간대별 트래픽 & 매출 (막대)</div>
-    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">어제 0~23시 기준 — 위에는 트래픽(세션), 아래에는 매출을 시간대별 막대그래프로 비교.</div>
+    <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
+      시간대별 트래픽 & 매출 (막대)
+    </div>
+    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
+      어제 0~23시 기준 — 위에는 트래픽(세션), 아래에는 매출을 시간대별 막대그래프로 비교합니다.
+    </div>
     {body_html}
   </td></tr>
 </table>
 """
 
-        d = df.copy()
-        if "시간_숫자" not in d.columns:
-            d["시간_숫자"] = d["시간"].astype(str).str.extract(r"(\d+)").fillna("0").astype(int)
+        df = df.copy()
+        df["세션수"] = _to_numeric_series(df["세션수"]).fillna(0).astype(int)
+        df["매출"] = _to_numeric_series(df["매출"]).fillna(0.0).astype(float)
+        df = df.sort_values("시간_숫자")
 
-        d["세션수"] = pd.to_numeric(d["세션수"], errors="coerce").fillna(0)
-        d["매출"] = pd.to_numeric(d["매출"], errors="coerce").fillna(0.0)
-        d = d.sort_values("시간_숫자")
+        hours = df["시간_숫자"].tolist()
+        sessions = df["세션수"].tolist()
+        revenue = df["매출"].tolist()
 
-        hours = d["시간_숫자"].tolist()
-        sessions = d["세션수"].tolist()
-        revenue = d["매출"].tolist()
-
-        if not hours:
-            return ""
-
-        max_sess = max(sessions) if max(sessions) > 0 else 1
-        max_rev = max(revenue) if max(revenue) > 0 else 1
+        max_sess = max(sessions) if sessions and max(sessions) > 0 else 1
+        max_rev = max(revenue) if revenue and max(revenue) > 0 else 1
         max_bar_height = 80
 
         labels_row = "".join(
@@ -1109,14 +1154,22 @@ def compose_html_daily(
             h = max(3, int(ratio * max_bar_height))
             sess_bar_row += f"""
 <td style="vertical-align:bottom; text-align:center;">
-  <div style="margin:0 auto; width:10px; height:{h}px; border-radius:999px 999px 0 0; background:#2563eb;"></div>
-</td>"""
+  <div style="margin:0 auto; width:10px; height:{h}px;
+              border-radius:999px 999px 0 0; background:#2563eb;"></div>
+</td>
+"""
 
         traffic_chart_html = f"""
-<div style="font-size:10px; color:#555; margin-bottom:4px;">· 트래픽 (세션수, 막대)</div>
+<div style="font-size:10px; color:#555; margin-bottom:4px;">
+  · 트래픽 (세션수, 막대)
+</div>
 <table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse;">
-  <tr style="height:{max_bar_height+15}px; vertical-align:bottom;">{sess_bar_row}</tr>
-  <tr>{labels_row}</tr>
+  <tr style="height:{max_bar_height+15}px; vertical-align:bottom;">
+    {sess_bar_row}
+  </tr>
+  <tr>
+    {labels_row}
+  </tr>
 </table>
 """
 
@@ -1126,14 +1179,22 @@ def compose_html_daily(
             h = max(3, int(ratio * max_bar_height))
             rev_bar_row += f"""
 <td style="vertical-align:bottom; text-align:center;">
-  <div style="margin:0 auto; width:10px; height:{h}px; border-radius:999px 999px 0 0; background:#fb923c;"></div>
-</td>"""
+  <div style="margin:0 auto; width:10px; height:{h}px;
+              border-radius:999px 999px 0 0; background:#fb923c;"></div>
+</td>
+"""
 
         revenue_chart_html = f"""
-<div style="font-size:10px; color:#555; margin-top:12px; margin-bottom:4px;">· 매출 (원, 막대)</div>
+<div style="font-size:10px; color:#555; margin-top:12px; margin-bottom:4px;">
+  · 매출 (원, 막대)
+</div>
 <table cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse;">
-  <tr style="height:{max_bar_height+15}px; vertical-align:bottom;">{rev_bar_row}</tr>
-  <tr>{labels_row}</tr>
+  <tr style="height:{max_bar_height+15}px; vertical-align:bottom;">
+    {rev_bar_row}
+  </tr>
+  <tr>
+    {labels_row}
+  </tr>
 </table>
 """
 
@@ -1143,9 +1204,14 @@ def compose_html_daily(
               border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
               padding:10px 12px; border-collapse:separate; margin-top:10px;">
   <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">시간대별 트래픽 & 매출 (막대)</div>
-    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">어제 0~23시 기준 — 위에는 트래픽(세션), 아래에는 매출을 시간대별 막대그래프로 비교.</div>
-    {traffic_chart_html}{revenue_chart_html}
+    <div style="font-size:11px; font-weight:600; color:#224; margin-bottom:2px;">
+      시간대별 트래픽 & 매출 (막대)
+    </div>
+    <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.4;">
+      어제 0~23시 기준 — 위에는 트래픽(세션), 아래에는 매출을 시간대별 막대그래프로 비교합니다.
+    </div>
+    {traffic_chart_html}
+    {revenue_chart_html}
   </td></tr>
 </table>
 """
@@ -1162,8 +1228,12 @@ def compose_html_daily(
               border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
               padding:10px 12px; border-collapse:separate;">
   <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:4px;">오늘의 인사이트</div>
-    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">{insight_items_html}</ul>
+    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:4px;">
+      오늘의 인사이트
+    </div>
+    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
+      {insight_items_html}
+    </ul>
   </td></tr>
 </table>
 """
@@ -1174,14 +1244,19 @@ def compose_html_daily(
               border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
               padding:10px 12px; border-collapse:separate;">
   <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#0f766e; margin-bottom:4px;">오늘 취할 액션</div>
-    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">{action_items_html}</ul>
+    <div style="font-size:11px; font-weight:600; color:#0f766e; margin-bottom:4px;">
+      오늘 취할 액션
+    </div>
+    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
+      {action_items_html}
+    </ul>
   </td></tr>
 </table>
 """
 
     insight_action_html = f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate; border-spacing:8px 10px; margin-top:14px;">
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="border-collapse:separate; border-spacing:8px 10px; margin-top:14px;">
   <tr>
     <td width="50%" valign="top">{insight_card_html}</td>
     <td width="50%" valign="top">{action_card_html}</td>
@@ -1189,16 +1264,17 @@ def compose_html_daily(
 </table>
 """
 
+    # ✅ 문구/컬럼명 오해 방지
     funnel_counts_box = df_to_html_box(
         "퍼널 전환 (view → cart → checkout → purchase)",
-        "단계별 이벤트 수 기준 전환 흐름입니다. (전일 대비 Δ 포함)",
+        "단계별 이벤트 수 기준 전환 흐름입니다. (전일 대비는 ‘이벤트 수’ 증감률)",
         funnel_counts_df,
         max_rows=None,
     )
 
     funnel_rate_box = df_to_html_box(
         "퍼널 이탈/전환율 & 벤치마크 비교",
-        "이탈율이 벤치마크보다 높으면 위험 구간으로 볼 수 있습니다. (전일 대비 Δ 포함)",
+        "위험 기준: 전환율이 ‘전환 최소(벤치마크)’ 미만인 경우 (Δ는 전일 대비 %p)",
         funnel_rate_df.assign(
             위험=lambda d: d.apply(
                 lambda r: "위험" if r["전환율(%)"] < r["벤치마크(전환 최소)"] else "",
@@ -1246,9 +1322,7 @@ def compose_html_daily(
     search_top_box = df_to_html_box(
         "온사이트 검색 상위 키워드",
         "검색수 기준 상위 키워드와 CVR입니다. (전일 대비 Δ 포함)",
-        search_df[["키워드", "검색수", "검색수 Δ", "구매수", "구매수 Δ", "CVR(%)", "CVR(%) Δ"]]
-        if (search_df is not None and not search_df.empty and "검색수 Δ" in search_df.columns)
-        else search_df,
+        search_df,
         max_rows=10,
     )
 
@@ -1260,23 +1334,25 @@ def compose_html_daily(
 </div>
 <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
   <tr>
-    <td width="50%" valign="top" style="padding:4px 6px 8px 0;">{funnel_counts_box}</td>
-    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{funnel_rate_box}</td>
+    <td width="50%" valign="top" style="padding:4px 6px 6px 0;">{funnel_counts_box}</td>
+    <td width="50%" valign="top" style="padding:4px 0 6px 6px;">{funnel_rate_box}</td>
   </tr>
   <tr>
-    <td width="50%" valign="top" style="padding:4px 6px 8px 0;">{traffic_box}</td>
-    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{pages_box}</td>
+    <td width="50%" valign="top" style="padding:4px 6px 6px 0;">{traffic_box}</td>
+    <td width="50%" valign="top" style="padding:4px 0 6px 6px;">{pages_box}</td>
   </tr>
   <tr>
-    <td width="50%" valign="top" style="padding:4px 6px 8px 0;">{products_top_box}</td>
-    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{products_low_box}</td>
+    <td width="50%" valign="top" style="padding:4px 6px 0 0;">{products_top_box}</td>
+    <td width="50%" valign="top" style="padding:4px 0 0 6px;">{products_low_box}</td>
   </tr>
   <tr>
     <td width="50%" valign="top" style="padding:4px 6px 0 0;">{products_hi_box}</td>
     <td width="50%" valign="top" style="padding:4px 0 0 6px;">{search_top_box}</td>
   </tr>
 </table>
-<div>{hourly_box}</div>
+<div>
+  {hourly_box}
+</div>
 """
 
     html = f"""<!DOCTYPE html>
@@ -1318,19 +1394,27 @@ def compose_html_daily(
                     <tr>
                       <td style="padding:0 3px;">
                         <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
-                                     background:#0055a5; color:#ffffff; border:1px solid #0055a5;">DAILY</span>
+                                     background:#0055a5; color:#ffffff; border:1px solid #0055a5;">
+                          DAILY
+                        </span>
                       </td>
                       <td style="padding:0 3px;">
                         <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
-                                     background:#fafbfd; color:#445; border:1px solid #dfe6f3;">KPI</span>
+                                     background:#fafbfd; color:#445; border:1px solid #dfe6f3;">
+                          KPI
+                        </span>
                       </td>
                       <td style="padding:0 3px;">
                         <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
-                                     background:#fafbfd; color:#445; border:1px solid #dfe6f3;">FUNNEL</span>
+                                     background:#fafbfd; color:#445; border:1px solid #dfe6f3;">
+                          FUNNEL
+                        </span>
                       </td>
                       <td style="padding:0 3px;">
                         <span style="display:inline-block; font-size:10px; padding:4px 9px; border-radius:999px;
-                                     background:#fafbfd; color:#445; border:1px solid #dfe6f3;">SEARCH</span>
+                                     background:#fafbfd; color:#445; border:1px solid #dfe6f3;">
+                          SEARCH
+                        </span>
                       </td>
                     </tr>
                   </table>
@@ -1349,14 +1433,22 @@ def compose_html_daily(
     <td width="33.3%" valign="top">
       <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
         <div style="font-size:11px; color:#777; margin-bottom:4px;">매출 (Revenue)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{format_money_manwon(kpi['revenue_today'])}</div>
+        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
+          {format_money_manwon(kpi['revenue_today'])}
+        </div>
         <div style="font-size:10px; color:#999; margin-bottom:4px;">
           LD: {format_money_manwon(kpi['revenue_ld'])} · LW: {format_money_manwon(kpi['revenue_prev'])} · LY: {format_money_manwon(kpi['revenue_yoy'])}
         </div>
         <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['revenue_ld_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['revenue_lw_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['revenue_ly_pct']:+.1f}%</span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">
+            LD {kpi['revenue_ld_pct']:+.1f}%
+          </span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">
+            LW {kpi['revenue_lw_pct']:+.1f}%
+          </span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">
+            LY {kpi['revenue_ly_pct']:+.1f}%
+          </span>
         </div>
       </div>
     </td>
@@ -1364,14 +1456,22 @@ def compose_html_daily(
     <td width="33.3%" valign="top">
       <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
         <div style="font-size:11px; color:#777; margin-bottom:4px;">방문자수 (UV)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{kpi['uv_today']:,}명</div>
+        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
+          {kpi['uv_today']:,}명
+        </div>
         <div style="font-size:10px; color:#999; margin-bottom:4px;">
           LD: {kpi['uv_ld']:,}명 · LW: {kpi['uv_prev']:,}명 · LY: {kpi['uv_yoy']:,}명
         </div>
         <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['uv_ld_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['uv_lw_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['uv_ly_pct']:+.1f}%</span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">
+            LD {kpi['uv_ld_pct']:+.1f}%
+          </span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">
+            LW {kpi['uv_lw_pct']:+.1f}%
+          </span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">
+            LY {kpi['uv_ly_pct']:+.1f}%
+          </span>
         </div>
       </div>
     </td>
@@ -1379,108 +1479,22 @@ def compose_html_daily(
     <td width="33.3%" valign="top">
       <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
         <div style="font-size:11px; color:#777; margin-bottom:4px;">전환율 (CVR)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{kpi['cvr_today']:.2f}%</div>
+        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">
+          {kpi['cvr_today']:.2f}%
+        </div>
         <div style="font-size:10px; color:#999; margin-bottom:4px;">
           LD: {kpi['cvr_ld']:.2f}% · LW: {kpi['cvr_prev']:.2f}% · LY: {kpi['cvr_yoy']:.2f}%
         </div>
         <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['cvr_ld_pct']:+.1f}%p</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['cvr_lw_pct']:+.1f}%p</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['cvr_ly_pct']:+.1f}%p</span>
-        </div>
-      </div>
-    </td>
-  </tr>
-
-  <tr>
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">구매수 (Orders)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{kpi['orders_today']:,}건</div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {kpi['orders_ld']:,}건 · LW: {kpi['orders_prev']:,}건 · LY: {kpi['orders_yoy']:,}건
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['orders_ld_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['orders_lw_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['orders_ly_pct']:+.1f}%</span>
-        </div>
-      </div>
-    </td>
-
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">객단가 (AOV)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{format_money(kpi['aov_today'])}</div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {format_money(kpi['aov_ld'])} · LW: {format_money(kpi['aov_prev'])} · LY: {format_money(kpi['aov_yoy'])}
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['aov_ld_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['aov_lw_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['aov_ly_pct']:+.1f}%</span>
-        </div>
-      </div>
-    </td>
-
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">신규 방문자 (New Visitors)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{kpi['new_today']:,}명</div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {kpi['new_ld']:,}명 · LW: {kpi['new_prev']:,}명 · LY: {kpi['new_yoy']:,}명
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['new_ld_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['new_lw_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['new_ly_pct']:+.1f}%</span>
-        </div>
-      </div>
-    </td>
-  </tr>
-
-  <tr>
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">오가닉 UV (Organic Search)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{kpi['organic_uv_today']:,}명</div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {kpi['organic_uv_ld']:,}명 · LW: {kpi['organic_uv_prev']:,}명 · LY: {kpi['organic_uv_yoy']:,}명
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['organic_uv_ld_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['organic_uv_lw_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['organic_uv_ly_pct']:+.1f}%</span>
-        </div>
-      </div>
-    </td>
-
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">비오가닉 UV (Non-organic)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{kpi['nonorganic_uv_today']:,}명</div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {kpi['nonorganic_uv_ld']:,}명 · LW: {kpi['nonorganic_uv_prev']:,}명 · LY: {kpi['nonorganic_uv_yoy']:,}명
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['nonorganic_uv_ld_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['nonorganic_uv_lw_pct']:+.1f}%</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['nonorganic_uv_ly_pct']:+.1f}%</span>
-        </div>
-      </div>
-    </td>
-
-    <td width="33.3%" valign="top">
-      <div style="background:#ffffff; border-radius:16px; padding:14px 16px; border:1px solid #e1e7f5;">
-        <div style="font-size:11px; color:#777; margin-bottom:4px;">오가닉 UV 비중 (Share)</div>
-        <div style="font-size:18px; font-weight:700; margin-bottom:4px;">{kpi['organic_share_today']:.1f}%</div>
-        <div style="font-size:10px; color:#999; margin-bottom:4px;">
-          LD: {kpi['organic_share_ld']:.1f}% · LW: {kpi['organic_share_prev']:.1f}% · LY: {kpi['organic_share_yoy']:.1f}%
-        </div>
-        <div>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">LD {kpi['organic_share_ld_pct']:+.1f}%p</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">LW {kpi['organic_share_lw_pct']:+.1f}%p</span>
-          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">LY {kpi['organic_share_ly_pct']:+.1f}%p</span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#e7f5ec; color:#1b7f4d; margin-right:4px;">
+            LD {kpi['cvr_ld_pct']:+.1f}%p
+          </span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#dbeafe; color:#1d4ed8; margin-right:4px;">
+            LW {kpi['cvr_lw_pct']:+.1f}%p
+          </span>
+          <span style="display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; background:#fdeaea; color:#c53030;">
+            LY {kpi['cvr_ly_pct']:+.1f}%p
+          </span>
         </div>
       </div>
     </td>
@@ -1507,160 +1521,26 @@ def compose_html_daily(
 
 
 # =====================================================================
-# 8) 추가 섹션 HTML 헬퍼 (오가닉/쿠폰/검색0/디바이스)
-# =====================================================================
-
-def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: Optional[int] = None) -> str:
-    if df is None or df.empty:
-        table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
-    else:
-        d = df.copy()
-        if max_rows is not None:
-            d = d.head(max_rows)
-        rows_html = ""
-        for _, row in d.iterrows():
-            tds = "".join(
-                f"<td style='font-size:11px; padding:2px 6px 2px 0; color:#222;'>{row[col]}</td>"
-                for col in d.columns
-            )
-            rows_html += f"<tr>{tds}</tr>"
-        header_html = "".join(
-            f"<th align='left' style='font-size:10px; padding:0 6px 3px 0; color:#666;'>{col}</th>"
-            for col in d.columns
-        )
-        table_html = f"""<table cellpadding='0' cellspacing='0' style='width:100%; border-collapse:collapse;'>
-  <thead><tr>{header_html}</tr></thead>
-  <tbody>{rows_html}</tbody>
-</table>"""
-
-    return f"""<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#ffffff; border-radius:12px;
-              border:1px solid #e1e7f5; box-shadow:0 3px 10px rgba(0,0,0,0.03);
-              padding:10px 12px; border-collapse:separate;">
-  <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:3px;">{title}</div>
-    <div style="font-size:10px; color:#777; margin-bottom:6px;">{subtitle}</div>
-    {table_html}
-  </td></tr>
-</table>"""
-
-
-def build_extra_sections_html(
-    organic_engines_df: Optional[pd.DataFrame],
-    organic_detail_df: Optional[pd.DataFrame],
-    coupon_df: Optional[pd.DataFrame],
-    search_zero_buy_df: Optional[pd.DataFrame],
-    device_split_df: Optional[pd.DataFrame],
-    device_funnel_df: Optional[pd.DataFrame],
-) -> str:
-    blocks: List[str] = []
-
-    # 03: Organic
-    if organic_engines_df is not None and not organic_engines_df.empty:
-        organic_box = df_to_html_box_extra(
-            "오가닉 검색 유입 (검색엔진별)",
-            "어제 Organic Search 유입을 검색엔진(소스)별로 나눈 데이터입니다.",
-            organic_engines_df[["검색엔진", "UV", "구매수", "CVR(%)"]],
-            max_rows=10,
-        )
-        blocks.append(f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
-  03 · ORGANIC SEARCH DETAIL
-</div>
-{organic_box}""")
-
-    if organic_detail_df is not None and not organic_detail_df.empty:
-        organic_detail_box = df_to_html_box_extra(
-            "오가닉 서치 상세 (Source / Medium)",
-            "Organic Search를 Source/Medium 조합으로 더 자세히 쪼갠 데이터입니다.",
-            organic_detail_df[["Source / Medium", "UV", "구매수", "CVR(%)"]],
-            max_rows=15,
-        )
-        blocks.append(organic_detail_box)
-
-    # 04: Ops
-    ops_cards: List[str] = []
-
-    if coupon_df is not None and not coupon_df.empty:
-        ops_cards.append(
-            df_to_html_box_extra(
-                "쿠폰/프로모션 사용 요약",
-                "어제 기준 쿠폰별 구매/매출 기여 (not set 제외).",
-                coupon_df,
-                max_rows=12,
-            )
-        )
-
-    if search_zero_buy_df is not None and not search_zero_buy_df.empty:
-        ops_cards.append(
-            df_to_html_box_extra(
-                "검색했지만 구매 0 키워드",
-                "검색수는 높은데 구매가 0인 키워드 — 결과/필터/상품구성 점검 우선순위.",
-                search_zero_buy_df,
-                max_rows=12,
-            )
-        )
-
-    if device_split_df is not None and not device_split_df.empty:
-        ops_cards.append(
-            df_to_html_box_extra(
-                "디바이스 성과 스플릿",
-                "deviceCategory별 UV/구매/매출/CVR/AOV 요약.",
-                device_split_df,
-                max_rows=10,
-            )
-        )
-
-    if device_funnel_df is not None and not device_funnel_df.empty:
-        ops_cards.append(
-            df_to_html_box_extra(
-                "디바이스별 퍼널 전환율",
-                "eventCount 기준 PDP→Cart / Cart→Checkout / Checkout→Purchase.",
-                device_funnel_df,
-                max_rows=10,
-            )
-        )
-
-    if ops_cards:
-        grid_rows = []
-        for i in range(0, len(ops_cards), 2):
-            left = ops_cards[i]
-            right = ops_cards[i + 1] if i + 1 < len(ops_cards) else ""
-            grid_rows.append(f"""
-  <tr>
-    <td width="50%" valign="top" style="padding:4px 6px 8px 0;">{left}</td>
-    <td width="50%" valign="top" style="padding:4px 0 8px 6px;">{right}</td>
-  </tr>""")
-
-        blocks.append(f"""<div style="font-size:11px; letter-spacing:0.12em; color:#6d7a99; margin-top:22px; margin-bottom:8px;">
-  04 · OPS CHECK (COUPON · SEARCH · DEVICE)
-</div>
-<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
-{''.join(grid_rows)}
-</table>""")
-
-    return "\n\n".join(blocks) if blocks else ""
-
-
-# =====================================================================
-# 9) 메인: 데일리 다이제스트 생성 & 발송
+# 8) 메인: 데일리 다이제스트 생성 & 발송
 # =====================================================================
 
 def send_daily_digest():
     kpi = build_core_kpi()
 
-    # 어제
     funnel_counts_df, funnel_rate_df = src_funnel_yesterday()
     traffic_df = src_traffic_yesterday()
     search_df = src_search_yesterday(limit=100)
     hourly_df = src_hourly_revenue_traffic()
 
-    # 전일(2daysAgo) — 02 카드 전일대비 Δ 생성용
     funnel_counts_prev_df, funnel_rate_prev_df = src_funnel_day("2daysAgo")
     traffic_prev_df = src_traffic_day("2daysAgo")
     search_prev_df = src_search_day("2daysAgo", limit=100)
 
-    # 02 카드용 Δ 컬럼 붙이기
     funnel_counts_df = _add_delta_cols(curr=funnel_counts_df, prev=funnel_counts_prev_df, key_cols=["단계"], metric_cols=["수"], mode="pct")
+    # ✅ 컬럼명 변경(오해 방지)
+    if funnel_counts_df is not None and not funnel_counts_df.empty:
+        funnel_counts_df = funnel_counts_df.rename(columns={"수 Δ": "전일 대비(%)"})
+
     funnel_rate_df = _add_delta_cols(curr=funnel_rate_df, prev=funnel_rate_prev_df, key_cols=["기준"], metric_cols=["전환율(%)", "이탈율(%)"], mode="pp")
     traffic_df = _add_delta_cols(curr=traffic_df, prev=traffic_prev_df, key_cols=["소스"], metric_cols=["UV", "구매수", "신규 방문자", "CVR(%)"], mode="pct")
     search_df = _add_delta_cols(curr=search_df, prev=search_prev_df, key_cols=["키워드"], metric_cols=["검색수", "구매수", "CVR(%)"], mode="pct")
@@ -1668,7 +1548,6 @@ def send_daily_digest():
     products_all = src_top_products_ga(limit=200)
     pages_df = src_top_pages_ga(limit=10)
 
-    # 오가닉 + ops
     organic_engines_df = src_organic_search_engines_yesterday(limit=10)
     organic_detail_df = src_organic_search_detail_source_medium_yesterday(limit=15)
 
@@ -1677,14 +1556,15 @@ def send_daily_digest():
     device_split_df = src_device_split_yesterday()
     device_funnel_df = src_funnel_by_device_yesterday()
 
-    # 상품 파생
     products_top_df = products_all.sort_values("상품조회수", ascending=False) if not products_all.empty else products_all
 
     products_lowconv_df = pd.DataFrame(columns=PRODUCT_COLS)
     products_hiconv_df = pd.DataFrame(columns=PRODUCT_COLS)
+
     if not products_all.empty:
         tmp_top = products_all.sort_values("상품조회수", ascending=False).head(30)
         products_lowconv_df = tmp_top.sort_values("CVR(%)", ascending=True).head(10)
+
         tmp_low = products_all.sort_values("상품조회수", ascending=True).head(50)
         products_hiconv_df = tmp_low.sort_values("CVR(%)", ascending=False).head(10)
 
@@ -1715,19 +1595,15 @@ def send_daily_digest():
         body += f"\n\n어제 기준 CVR {kpi['cvr_today']:.2f}%, 매출 {format_money_manwon(kpi['revenue_today'])}, UV {kpi['uv_today']:,}명."
         send_critical_alert("⚠️ [Critical] Columbia Daily 지표 이상 감지", body)
 
-    # 02 아래에 추가 섹션 삽입
-    try:
-        extra_html = build_extra_sections_html(
-            organic_engines_df=organic_engines_df,
-            organic_detail_df=organic_detail_df,
-            coupon_df=coupon_df,
-            search_zero_buy_df=search_zero_buy_df,
-            device_split_df=device_split_df,
-            device_funnel_df=device_funnel_df,
-        )
-    except Exception as e:
-        print(f"[WARN] extra sections html 생성 중 에러: {e}")
-        extra_html = ""
+    # 02 아래 추가 섹션 삽입
+    extra_html = build_extra_sections_html(
+        organic_engines_df=organic_engines_df,
+        organic_detail_df=organic_detail_df,
+        coupon_df=coupon_df,
+        search_zero_buy_df=search_zero_buy_df,
+        device_split_df=device_split_df,
+        device_funnel_df=device_funnel_df,
+    )
 
     if extra_html:
         footer_marker = '<div style="margin-top:18px; font-size:10px; color:#99a; text-align:right;">'
@@ -1737,6 +1613,7 @@ def send_daily_digest():
             html = html.replace("</body>", extra_html + "\n</body>", 1)
 
     subject = "[Daily] Columbia eCommerce Performance Digest"
+
     jpeg_path = html_to_jpeg(html)
     send_email_html(subject, html, DAILY_RECIPIENTS, jpeg_path=jpeg_path)
 
