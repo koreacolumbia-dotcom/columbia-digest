@@ -2809,8 +2809,4 @@ def build_extra_sections_html(
 
     return "\n\n".join(blocks)
 '''
-out_path = "/mnt/data/columbia_daily_digest_full.py"
-with open(out_path, "w", encoding="utf-8") as f:
-    f.write(content)
-
 out_path, os.path.getsize(out_path)
