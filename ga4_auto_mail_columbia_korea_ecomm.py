@@ -20,13 +20,19 @@ Daily eCommerce Performance Digest (GA4 + HTML Mail)
 - 02 섹션: products_hi 폭 축소 / search_top 폭 확대
 - 03 오가닉: 엔진별 + Source/Medium 2개를 한 줄(50:50)
 - 표 텍스트 세로 깨짐 방지(word-break/white-space/overflow-wrap)
+
+[2025-12-19 patch]
+- 03 오가닉(엔진별/SourceMedium) 카드 상단에 UV/구매/CVR 전일 대비 요약(증가=파란 굵게, 감소=빨간 굵게)
+- 04 섹션 중 UV/구매/CVR이 존재하는 카드(예: 디바이스 스플릿 등)에도 동일 요약 표시(가능한 카드만 자동 적용)
+- 오늘의 인사이트 / 오늘 취할 액션: MD / 마케팅 / Site Ops(영문)로 더 상세하게 분리 작성
+- 기존 레이아웃/KPI 9개/그리드 구조는 유지
 """
 
 import os
 import smtplib
 import pandas as pd
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -53,7 +59,7 @@ SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 
 DAILY_RECIPIENTS = [
     e.strip()
-    for e in os.getenv("DAILY_RECIPIENTS", "korea_Ecom@columbia.com").split(",")
+    for e in os.getenv("DAILY_RECIPIENTS", "hugh.kang@columbia.com").split(",")
     if e.strip()
 ]
 
@@ -133,6 +139,64 @@ def _to_numeric_series(s: pd.Series) -> pd.Series:
         return pd.to_numeric(s2, errors="coerce")
     except Exception:
         return pd.to_numeric(s, errors="coerce")
+
+
+def _fmt_delta_span(val: float, suffix: str = "%", is_pp: bool = False) -> str:
+    """
+    val: +/-
+    증가: 파란 굵게, 감소: 빨간 굵게, 0: 회색
+    """
+    try:
+        v = float(val)
+    except Exception:
+        return "<span style='color:#94a3b8; font-weight:600;'>n/a</span>"
+
+    if is_pp:
+        txt = f"{v:+.2f}%p"
+    else:
+        txt = f"{v:+.1f}{suffix}"
+
+    if v > 0:
+        return f"<span style='color:#1d4ed8; font-weight:800;'>{txt}</span>"
+    elif v < 0:
+        return f"<span style='color:#c2410c; font-weight:800;'>{txt}</span>"
+    else:
+        return f"<span style='color:#64748b; font-weight:700;'>{txt}</span>"
+
+
+def _uv_buy_cvr_summary(curr_df: pd.DataFrame, prev_df: pd.DataFrame,
+                        uv_col: str = "UV", buy_col: str = "구매수") -> Optional[str]:
+    """
+    카드 상단 요약용: UV / 구매수 / CVR 전일 대비.
+    - curr_df/prev_df에 uv_col, buy_col 이 있으면 합계 기반으로 계산
+    - CVR은 (sum(buy)/sum(uv))*100, Δ는 %p
+    """
+    if curr_df is None or curr_df.empty or prev_df is None or prev_df.empty:
+        return None
+    if uv_col not in curr_df.columns or buy_col not in curr_df.columns:
+        return None
+    if uv_col not in prev_df.columns or buy_col not in prev_df.columns:
+        return None
+
+    c_uv = int(_to_numeric_series(curr_df[uv_col]).fillna(0).sum())
+    c_buy = int(_to_numeric_series(curr_df[buy_col]).fillna(0).sum())
+    p_uv = int(_to_numeric_series(prev_df[uv_col]).fillna(0).sum())
+    p_buy = int(_to_numeric_series(prev_df[buy_col]).fillna(0).sum())
+
+    c_cvr = (c_buy / c_uv * 100) if c_uv > 0 else 0.0
+    p_cvr = (p_buy / p_uv * 100) if p_uv > 0 else 0.0
+
+    uv_delta_pct = pct_change(c_uv, p_uv)
+    buy_delta_pct = pct_change(c_buy, p_buy)
+    cvr_delta_pp = round((c_cvr - p_cvr), 2)
+
+    html = (
+        f"전일 대비: "
+        f"UV {_fmt_delta_span(uv_delta_pct, suffix='%')} · "
+        f"구매 {_fmt_delta_span(buy_delta_pct, suffix='%')} · "
+        f"CVR {_fmt_delta_span(cvr_delta_pp, is_pp=True)}"
+    )
+    return html
 
 
 # =====================================================================
@@ -443,12 +507,12 @@ def src_hourly_revenue_traffic():
     return df[["시간", "시간_숫자", "세션수", "매출"]]
 
 
-def src_organic_search_engines_yesterday(limit: int = 10) -> pd.DataFrame:
+def src_organic_search_engines_day(day_keyword: str, limit: int = 10) -> pd.DataFrame:
     df = ga_run_report(
         dimensions=["sessionDefaultChannelGroup", "sessionSource"],
         metrics=["sessions", "transactions"],
-        start_date="yesterday",
-        end_date="yesterday",
+        start_date=day_keyword,
+        end_date=day_keyword,
         limit=0,
     )
     if df.empty:
@@ -470,12 +534,16 @@ def src_organic_search_engines_yesterday(limit: int = 10) -> pd.DataFrame:
     return df[["검색엔진", "UV", "구매수", "CVR(%)"]]
 
 
-def src_organic_search_detail_source_medium_yesterday(limit: int = 15) -> pd.DataFrame:
+def src_organic_search_engines_yesterday(limit: int = 10) -> pd.DataFrame:
+    return src_organic_search_engines_day("yesterday", limit=limit)
+
+
+def src_organic_search_detail_source_medium_day(day_keyword: str, limit: int = 15) -> pd.DataFrame:
     df = ga_run_report(
         dimensions=["sessionDefaultChannelGroup", "sessionSource", "sessionMedium"],
         metrics=["sessions", "transactions"],
-        start_date="yesterday",
-        end_date="yesterday",
+        start_date=day_keyword,
+        end_date=day_keyword,
         limit=0,
     )
     if df.empty:
@@ -497,6 +565,10 @@ def src_organic_search_detail_source_medium_yesterday(limit: int = 15) -> pd.Dat
 
     out = out.sort_values("UV", ascending=False).head(limit)
     return out[["Source / Medium", "UV", "구매수", "CVR(%)"]]
+
+
+def src_organic_search_detail_source_medium_yesterday(limit: int = 15) -> pd.DataFrame:
+    return src_organic_search_detail_source_medium_day("yesterday", limit=limit)
 
 
 def src_coupon_performance_yesterday(limit: int = 12) -> pd.DataFrame:
@@ -550,13 +622,13 @@ def src_search_zero_purchase_yesterday(min_searches: int = 20, limit: int = 12) 
     return d[["키워드", "검색수", "구매수", "CVR(%)"]]
 
 
-def src_device_split_yesterday() -> pd.DataFrame:
+def src_device_split_day(day_keyword: str) -> pd.DataFrame:
     try:
         df = ga_run_report(
             dimensions=["deviceCategory"],
             metrics=["sessions", "transactions", "purchaseRevenue"],
-            start_date="yesterday",
-            end_date="yesterday",
+            start_date=day_keyword,
+            end_date=day_keyword,
             limit=0,
         )
     except Exception:
@@ -585,6 +657,10 @@ def src_device_split_yesterday() -> pd.DataFrame:
 
     df = df.sort_values("UV", ascending=False)
     return df[["디바이스", "UV", "구매수", "매출(만원)", "CVR(%)", "AOV(원)"]]
+
+
+def src_device_split_yesterday() -> pd.DataFrame:
+    return src_device_split_day("yesterday")
 
 
 def src_funnel_by_device_yesterday() -> pd.DataFrame:
@@ -854,76 +930,152 @@ def build_core_kpi():
     }
 
 
-def build_signals(kpi, funnel_rate_df, traffic_df, search_df):
-    signals = []
+def build_role_insights_and_actions(
+    kpi,
+    funnel_rate_df,
+    traffic_df,
+    search_df,
+    products_top_df,
+    products_lowconv_df,
+    products_hiconv_df,
+    pages_df,
+    organic_engines_df,
+    organic_detail_df,
+    device_split_df,
+    organic_engines_prev_df=None,
+    organic_detail_prev_df=None,
+    device_split_prev_df=None,
+) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
+    """
+    메일의 전체 데이터(현재 스크립트에서 수집한 범위) 기반으로
+    MD / 마케팅 / Site Ops 별로 '오늘의 인사이트'와 '오늘 취할 액션'을 더 구체적으로 작성.
+    """
+    insights: Dict[str, List[str]] = {"MD": [], "마케팅": [], "Site Ops": []}
+    actions: Dict[str, List[str]] = {"MD": [], "마케팅": [], "Site Ops": []}
 
-    if kpi["revenue_lw_pct"] > 0 and kpi["cvr_lw_pct"] > 0:
-        signals.append(f"매출이 전주 동일 요일 대비 {kpi['revenue_lw_pct']:.1f}% ↑, CVR은 {kpi['cvr_lw_pct']:.1f}%p 개선되었습니다.")
-    elif kpi["revenue_lw_pct"] < 0 and kpi["uv_lw_pct"] < 0:
-        signals.append(f"매출({kpi['revenue_lw_pct']:.1f}%)과 UV({kpi['uv_lw_pct']:.1f}%)가 함께 감소해 상단 퍼널 유입 점검이 필요합니다.")
+    # ---- 공통 파생 ----
+    top_channel = None
+    if traffic_df is not None and not traffic_df.empty:
+        t0 = traffic_df.iloc[0]
+        top_channel = (str(t0.get("소스", "")), int(t0.get("UV", 0)), float(t0.get("CVR(%)", 0.0)))
+
+    # Organic delta summary
+    org_summary = _uv_buy_cvr_summary(organic_engines_df, organic_engines_prev_df) if organic_engines_prev_df is not None else None
+    dev_summary = _uv_buy_cvr_summary(device_split_df, device_split_prev_df) if device_split_prev_df is not None else None
+
+    # ---- 마케팅 인사이트 ----
+    if kpi["uv_lw_pct"] < 0 and kpi["revenue_lw_pct"] < 0:
+        insights["마케팅"].append("상단 유입(UV)과 매출이 동반 하락 → 신규 유입원(Organic/Non-Organic) 분해 점검이 우선입니다.")
     else:
-        signals.append(f"매출 {kpi['revenue_lw_pct']:.1f}%, UV {kpi['uv_lw_pct']:.1f}%, CVR {kpi['cvr_lw_pct']:.1f}%p 변동을 보였습니다.")
+        insights["마케팅"].append(f"전주 동일 요일 대비: UV {kpi['uv_lw_pct']:+.1f}%, 매출 {kpi['revenue_lw_pct']:+.1f}%, CVR {kpi['cvr_lw_pct']:+.1f}%p 흐름입니다.")
 
+    if top_channel:
+        insights["마케팅"].append(f"채널 기준 최대 유입은 {top_channel[0]}(UV {top_channel[1]:,}, CVR {top_channel[2]:.2f}%)로 보이며, 당일 성과 변동의 1차 기여 채널입니다.")
+
+    if org_summary:
+        insights["마케팅"].append(f"오가닉(검색엔진) 기준 {org_summary} — SEO/브랜드검색·비브랜드검색 변동을 함께 확인하세요.")
+
+    # 저전환 검색어
+    if search_df is not None and not search_df.empty:
+        bad = search_df[search_df["CVR(%)"] < SEARCH_CVR_MIN]
+        if not bad.empty:
+            k_list = bad.head(3)["키워드"].tolist()
+            insights["마케팅"].append(f"온사이트 검색 저전환(CVR<{SEARCH_CVR_MIN}%): {', '.join(k_list)} — 랜딩/결과 정합성 이슈 가능성이 큽니다.")
+        else:
+            insights["마케팅"].append("온사이트 검색은 저전환 키워드 비중이 크지 않아, 검색 결과·필터 구조는 비교적 안정적일 가능성이 높습니다.")
+
+    # ---- MD 인사이트 ----
+    if products_top_df is not None and not products_top_df.empty:
+        hot = products_top_df.head(2)["상품명"].tolist()
+        insights["MD"].append(f"조회/매출 기준 ‘치고 올라오는 상품’ 상위: {hot[0]} / {hot[1] if len(hot) > 1 else ''} — 재고/노출/딜 연계 우선 후보입니다.".strip())
+
+    if products_lowconv_df is not None and not products_lowconv_df.empty:
+        low = products_lowconv_df.head(2)[["상품명", "상품조회수", "CVR(%)"]].values.tolist()
+        insights["MD"].append(f"조회 대비 전환 저조 상품이 존재 — 예: {low[0][0]}(조회 {int(low[0][1]):,}, CVR {float(low[0][2]):.2f}%). 가격/옵션/리뷰/배송혜택 점검 필요.")
+
+    if products_hiconv_df is not None and not products_hiconv_df.empty:
+        hi = products_hiconv_df.head(2)[["상품명", "상품조회수", "CVR(%)"]].values.tolist()
+        insights["MD"].append(f"저조회 고전환 상품이 있어 ‘노출 확대’로 매출 레버리지 가능 — 예: {hi[0][0]}(조회 {int(hi[0][1]):,}, CVR {float(hi[0][2]):.2f}%).")
+
+    if pages_df is not None and not pages_df.empty:
+        p0 = str(pages_df.iloc[0].get("페이지", ""))
+        insights["MD"].append(f"상위 페이지뷰 1위: {p0} — 현재 고객 관심 동선의 시작점/중간 기착점일 가능성이 높습니다.")
+
+    # ---- Site Ops 인사이트 ----
     if funnel_rate_df is not None and not funnel_rate_df.empty:
         high_drop = funnel_rate_df[funnel_rate_df["전환율(%)"] < funnel_rate_df["벤치마크(전환 최소)"]]
         if not high_drop.empty:
             names = ", ".join(high_drop["구간"].tolist())
-            signals.append(f"퍼널 기준 이탈이 큰 구간은 {names}로, 해당 단계 UI/혜택/카피 점검이 우선입니다.")
+            insights["Site Ops"].append(f"퍼널 벤치마크 미달 구간: {names} — 해당 단계의 오류/속도/UX/혜택 노출을 우선 점검하세요.")
         else:
-            signals.append("퍼널 전환율은 설정한 벤치마크 이상으로 전반적으로 안정적입니다.")
+            insights["Site Ops"].append("퍼널 전환율이 벤치마크 이상으로 전반적으로 안정적입니다(급격한 UX 이슈 신호는 약함).")
 
-    if traffic_df is not None and not traffic_df.empty:
-        top = traffic_df.iloc[0]
-        signals.append(f"유입은 {top['소스']} 채널(UV {int(top['UV']):,}명, CVR {float(top['CVR(%)']):.2f}%) 비중이 가장 큽니다.")
+    if dev_summary:
+        insights["Site Ops"].append(f"디바이스 스플릿 기준 {dev_summary} — 모바일 전환 변동 시 체크아웃·결제 구간 우선 검증 필요.")
+
+    if kpi["cvr_lw_pct"] < 0:
+        insights["Site Ops"].append("CVR 하락 시나리오: (1) PDP→Cart (2) Cart→Checkout (3) Checkout→Purchase 순으로 병목을 좁혀 확인하는 게 효율적입니다.")
+    else:
+        insights["Site Ops"].append("전환이 유지/개선되는 날은 유입 확대·상품 노출 실험의 안전성이 상대적으로 높습니다(큰 장애 신호 낮음).")
+
+    # ---- 액션: 마케팅 ----
+    if kpi["uv_lw_pct"] < 0:
+        actions["마케팅"].append("유입 보강: 성과가 버티는 채널/캠페인(브랜드검색, 리타게팅, 프로모션 소재)을 1~2개 선정해 예산/노출을 소폭 상향 테스트.")
+    else:
+        actions["마케팅"].append("상승 구간 강화: CVR 또는 매출이 버티는 채널에 ‘동일 메시지’의 소재 변형(혜택/카피/썸네일) 2종을 빠르게 A/B.")
 
     if search_df is not None and not search_df.empty:
         bad = search_df[search_df["CVR(%)"] < SEARCH_CVR_MIN]
         if not bad.empty:
-            top_bad = bad.head(2)["키워드"].tolist()
-            signals.append(f"저전환 검색어(CVR {SEARCH_CVR_MIN}% 미만)는 {', '.join(top_bad)} 등이 있어 결과 보완이 필요합니다.")
+            actions["마케팅"].append("온사이트 검색 저전환 키워드 3개를 선정해 (1) 검색 결과 상단 상품 교체 (2) 필터 프리셋 (3) 기획전 랜딩 연결 중 1개 적용.")
+        else:
+            actions["마케팅"].append("검색 상위 키워드를 기반으로 ‘베스트/선물/방한’ 등 큐레이션 랜딩을 1개 추가해 탐색→구매 전환을 단축.")
 
-    fallback = [
-        "· 오늘은 전반적인 트렌드를 중심으로 지표를 확인해 주세요.",
-        "· 주요 채널·퍼널 구간·상품 성과를 함께 보면서 액션 포인트를 잡을 수 있습니다.",
-    ]
-    while len(signals) < 4:
-        signals.append(fallback[len(signals) % len(fallback)])
-    return signals[:4]
+    if org_summary:
+        actions["마케팅"].append("오가닉 변화가 큰 날은: 브랜드/비브랜드 검색어 콘솔 점검 + 주요 랜딩(PDP/카테고리) 타이틀·메타·내부링크 우선 수정 후보 추리기.")
 
-
-def build_actions(kpi, funnel_rate_df, traffic_df, search_df):
-    actions = []
-
-    if kpi["revenue_lw_pct"] < 0 and kpi["uv_lw_pct"] < 0:
-        actions.append("매출·UV가 동반 하락 중이므로 상단 퍼널 신규 유입 캠페인(소재·입찰·예산)을 우선 점검합니다.")
-    elif kpi["cvr_lw_pct"] < 0:
-        actions.append("CVR이 전주 대비 하락해 모바일 장바구니·체크아웃 구간의 전환율과 UX를 집중적으로 확인합니다.")
+    # ---- 액션: MD ----
+    if products_hiconv_df is not None and not products_hiconv_df.empty:
+        hi1 = str(products_hiconv_df.iloc[0].get("상품명", ""))
+        actions["MD"].append(f"노출 확대: 저조회 고전환 1순위({hi1})를 카테고리/기획전 상단 슬롯에 배치(24h 테스트) 후 매출 증분 확인.")
     else:
-        actions.append("성과가 좋은 채널/소재의 예산을 소폭 상향해 상승 구간을 더 밀어주는 실험을 진행합니다.")
+        actions["MD"].append("노출 확대 후보가 비어 있으면, ‘조회 상위 + CVR 상위’ 교집합 3개를 선정해 상단 슬롯 테스트로 대체.")
 
+    if products_lowconv_df is not None and not products_lowconv_df.empty:
+        low1 = products_lowconv_df.iloc[0]
+        actions["MD"].append(f"전환 개선: 조회 상위 저전환 1순위({low1.get('상품명','')})는 가격/옵션/리뷰/혜택(무료반품/쿠폰) 노출을 PDP 상단으로 재배치.")
+    else:
+        actions["MD"].append("조회 상위 저전환 상품이 뚜렷하지 않으면, ‘검색 상위 키워드’와 매칭되는 상품 구성을 더 얇게(Top 12) 정리해 선택 부담을 줄이기.")
+
+    if pages_df is not None and not pages_df.empty:
+        actions["MD"].append("페이지뷰 상위 랜딩의 큐레이션(정렬 기본값/필터 프리셋/배너 카피)을 ‘방한/선물/베스트’ 목적형으로 1개만이라도 명확히 고정.")
+
+    # ---- 액션: Site Ops ----
     if funnel_rate_df is not None and not funnel_rate_df.empty:
         high_drop = funnel_rate_df[funnel_rate_df["전환율(%)"] < funnel_rate_df["벤치마크(전환 최소)"]]
         if not high_drop.empty:
-            actions.append("이탈이 큰 퍼널 구간의 배송비·쿠폰·CTA 카피를 이번 주 안에 최소 1개 이상 테스트합니다.")
+            actions["Site Ops"].append("병목 구간(벤치마크 미달)에서: (1) 로딩/스크립트 오류 (2) 배송비/쿠폰 노출 (3) CTA 버튼 가시성 순으로 빠르게 체크리스트 점검.")
         else:
-            actions.append("퍼널이 안정적인 편이므로 신규 유입 확대 및 VIP 재구매 쪽으로 테스트 리소스를 배분합니다.")
-    else:
-        actions.append("퍼널 데이터가 부족해 우선 전체 전환율 흐름을 모니터링하면서, 채널/상품 단위의 이상만 체크합니다.")
+            actions["Site Ops"].append("퍼널이 안정적이면, 체크아웃의 마이크로 개선(결제수단 디폴트, 에러 메시지 문구, 주소 자동완성)을 1개만이라도 반영/검증.")
 
-    if traffic_df is not None and not traffic_df.empty:
-        top = traffic_df.iloc[0]
-        actions.append(f"{top['소스']} 채널의 성과 좋은 소재를 기준으로 유사 카피·이미지를 다른 채널에도 확장 테스트합니다.")
+    if device_split_df is not None and not device_split_df.empty:
+        # 모바일이 1순위일 때 가정하지 않고, UV 1위 디바이스 체크
+        top_dev = str(device_split_df.iloc[0].get("디바이스", ""))
+        actions["Site Ops"].append(f"디바이스 최다 UV({top_dev}) 기준으로 결제/쿠폰/옵션 선택 UX를 우선 리그레션 테스트(장바구니→결제완료까지 1회).")
 
-    if search_df is not None and not search_df.empty:
-        bad = search_df[search_df["CVR(%)"] < SEARCH_CVR_MIN]
-        if not bad.empty:
-            actions.append("저전환 검색어의 노출 상품/필터를 재구성하거나, 상세 설명·가격 정책을 조정하는 안을 검토합니다.")
-        else:
-            actions.append("상위 검색어 기준으로 기획전/컬렉션 페이지를 추가 구성해 전환을 더 끌어올릴 수 있는지 테스트합니다.")
+    actions["Site Ops"].append("검색→구매 0 키워드가 반복되면, 검색 결과 ‘품절/비연관’ 제거 규칙과 추천 슬롯(대체 상품)을 우선 적용.")
 
-    while len(actions) < 4:
-        actions.append("오늘 눈에 띄는 채널/상품 1~2개를 선정해 소규모 예산으로 실험을 바로 실행합니다.")
-    return actions[:4]
+    # 길이 보정(각 3~4개 유지)
+    for r in insights:
+        while len(insights[r]) < 3:
+            insights[r].append("핵심 지표와 상세 카드의 변동 원인을 1개 가설로 좁혀 오늘 안에 검증 가능한 단위로 쪼개는 게 효율적입니다.")
+        insights[r] = insights[r][:4]
+    for r in actions:
+        while len(actions[r]) < 3:
+            actions[r].append("상위 1개 항목만이라도 오늘 내 실행/검증해 ‘내일 메일에서 변화’를 확인할 수 있게 만드세요.")
+        actions[r] = actions[r][:4]
+
+    return insights, actions
 
 
 # =====================================================================
@@ -949,7 +1101,9 @@ def _table_style_replace(html: str) -> str:
     return html
 
 
-def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: Optional[int] = None) -> str:
+def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame,
+                        max_rows: Optional[int] = None,
+                        delta_summary_html: Optional[str] = None) -> str:
     if df is None or df.empty:
         table_html = "<p style='color:#999;font-size:11px;margin:4px 0 0 0;'>데이터 없음</p>"
     else:
@@ -958,6 +1112,10 @@ def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: 
             d = d.head(max_rows)
         inner = d.to_html(index=False, border=0, justify="left", escape=False)
         table_html = _table_style_replace(inner)
+
+    delta_line = ""
+    if delta_summary_html:
+        delta_line = f"<div style='font-size:10px; margin-top:2px; color:#64748b; line-height:1.35;'>{delta_summary_html}</div>"
 
     return f"""<table width="100%" cellpadding="0" cellspacing="0"
        style="background:#ffffff; border-radius:12px;
@@ -969,6 +1127,7 @@ def df_to_html_box_extra(title: str, subtitle: str, df: pd.DataFrame, max_rows: 
     </div>
     <div style="font-size:10px; color:#777; margin-bottom:6px; line-height:1.35;">
       {subtitle}
+      {delta_line}
     </div>
     {table_html}
   </td></tr>
@@ -982,17 +1141,25 @@ def build_extra_sections_html(
     search_zero_buy_df: pd.DataFrame | None,
     device_split_df: pd.DataFrame | None,
     device_funnel_df: pd.DataFrame | None,
+    organic_engines_prev_df: pd.DataFrame | None = None,
+    organic_detail_prev_df: pd.DataFrame | None = None,
+    device_split_prev_df: pd.DataFrame | None = None,
 ) -> str:
     blocks: List[str] = []
 
-    # ✅ 03: 두 카드(엔진별/소스미디엄) 한 줄(50:50)
+    # ✅ 03: 두 카드(엔진별/소스미디엄) 한 줄(50:50) + 상단 요약(전일 대비)
     organic_cards = []
+
+    org_eng_delta = _uv_buy_cvr_summary(organic_engines_df, organic_engines_prev_df) if organic_engines_prev_df is not None else None
+    org_det_delta = _uv_buy_cvr_summary(organic_detail_df, organic_detail_prev_df) if organic_detail_prev_df is not None else None
+
     if organic_engines_df is not None and not organic_engines_df.empty:
         organic_cards.append(df_to_html_box_extra(
             "오가닉 검색 유입 (검색엔진별)",
             "어제 Organic Search 유입을 검색엔진(소스)별로 나눈 데이터입니다.",
             organic_engines_df,
             max_rows=10,
+            delta_summary_html=org_eng_delta,
         ))
     else:
         organic_cards.append("")
@@ -1003,6 +1170,7 @@ def build_extra_sections_html(
             "Organic Search를 Source/Medium 조합으로 더 자세히 쪼갠 데이터입니다.",
             organic_detail_df,
             max_rows=15,
+            delta_summary_html=org_det_delta,
         ))
     else:
         organic_cards.append("")
@@ -1027,6 +1195,7 @@ def build_extra_sections_html(
             "어제 기준 쿠폰별 구매/매출 기여 (not set 제외).",
             coupon_df,
             max_rows=12,
+            delta_summary_html=None,  # UV/CVR 없음(요약 요구 대상 아님)
         ))
 
     if search_zero_buy_df is not None and not search_zero_buy_df.empty:
@@ -1035,14 +1204,17 @@ def build_extra_sections_html(
             "검색수는 높은데 구매가 0인 키워드 — 결과/필터/상품구성 점검 우선순위.",
             search_zero_buy_df,
             max_rows=12,
+            delta_summary_html=None,  # UV 개념 아님
         ))
 
+    dev_delta = _uv_buy_cvr_summary(device_split_df, device_split_prev_df) if device_split_prev_df is not None else None
     if device_split_df is not None and not device_split_df.empty:
         ops_cards.append(df_to_html_box_extra(
             "디바이스 성과 스플릿",
             "deviceCategory별 UV/구매/매출/CVR/AOV 요약.",
             device_split_df,
             max_rows=10,
+            delta_summary_html=dev_delta,
         ))
 
     if device_funnel_df is not None and not device_funnel_df.empty:
@@ -1051,6 +1223,7 @@ def build_extra_sections_html(
             "eventCount 기준 PDP→Cart / Cart→Checkout / Checkout→Purchase.",
             device_funnel_df,
             max_rows=10,
+            delta_summary_html=None,
         ))
 
     if ops_cards:
@@ -1089,6 +1262,13 @@ def compose_html_daily(
     products_lowconv_df,
     products_hiconv_df,
     pages_df,
+    # for role insights/actions
+    organic_engines_df=None,
+    organic_detail_df=None,
+    device_split_df=None,
+    organic_engines_prev_df=None,
+    organic_detail_prev_df=None,
+    device_split_prev_df=None,
 ):
     def df_to_html_box(title, subtitle, df, max_rows=None):
         if df is None or df.empty:
@@ -1224,11 +1404,34 @@ def compose_html_daily(
 </table>
 """
 
-    signals_list = build_signals(kpi, funnel_rate_df, traffic_df, search_df)
-    actions_list = build_actions(kpi, funnel_rate_df, traffic_df, search_df)
+    # ✅ 역할별 인사이트/액션 (더 상세)
+    role_insights, role_actions = build_role_insights_and_actions(
+        kpi=kpi,
+        funnel_rate_df=funnel_rate_df,
+        traffic_df=traffic_df,
+        search_df=search_df,
+        products_top_df=products_top_df,
+        products_lowconv_df=products_lowconv_df,
+        products_hiconv_df=products_hiconv_df,
+        pages_df=pages_df,
+        organic_engines_df=organic_engines_df,
+        organic_detail_df=organic_detail_df,
+        device_split_df=device_split_df,
+        organic_engines_prev_df=organic_engines_prev_df,
+        organic_detail_prev_df=organic_detail_prev_df,
+        device_split_prev_df=device_split_prev_df,
+    )
 
-    insight_items_html = "".join(f"<li style='margin-bottom:3px;'>{s}</li>" for s in signals_list)
-    action_items_html = "".join(f"<li style='margin-bottom:3px;'>{s}</li>" for s in actions_list)
+    def _role_block_html(title: str, items: List[str], accent: str) -> str:
+        li = "".join(f"<li style='margin-bottom:3px;'>{x}</li>" for x in items)
+        return f"""
+<div style="margin-bottom:8px;">
+  <div style="font-size:11px; font-weight:800; color:{accent}; margin-bottom:4px;">{title}</div>
+  <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
+    {li}
+  </ul>
+</div>
+"""
 
     insight_card_html = f"""
 <table width="100%" cellpadding="0" cellspacing="0"
@@ -1236,12 +1439,12 @@ def compose_html_daily(
               border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
               padding:10px 12px; border-collapse:separate;">
   <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#004a99; margin-bottom:4px;">
+    <div style="font-size:11px; font-weight:700; color:#004a99; margin-bottom:6px;">
       오늘의 인사이트
     </div>
-    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
-      {insight_items_html}
-    </ul>
+    {_role_block_html("MD", role_insights.get("MD", []), "#0b4f6c")}
+    {_role_block_html("마케팅", role_insights.get("마케팅", []), "#1d4ed8")}
+    {_role_block_html("Site Ops", role_insights.get("Site Ops", []), "#0f766e")}
   </td></tr>
 </table>
 """
@@ -1252,12 +1455,12 @@ def compose_html_daily(
               border:1px solid #e1e7f5; box-shadow:0 4px 12px rgba(0,0,0,0.04);
               padding:10px 12px; border-collapse:separate;">
   <tr><td>
-    <div style="font-size:11px; font-weight:600; color:#0f766e; margin-bottom:4px;">
+    <div style="font-size:11px; font-weight:700; color:#0f766e; margin-bottom:6px;">
       오늘 취할 액션
     </div>
-    <ul style="margin:0; padding-left:16px; font-size:11px; color:#555; line-height:1.6;">
-      {action_items_html}
-    </ul>
+    {_role_block_html("MD", role_actions.get("MD", []), "#0b4f6c")}
+    {_role_block_html("마케팅", role_actions.get("마케팅", []), "#1d4ed8")}
+    {_role_block_html("Site Ops", role_actions.get("Site Ops", []), "#0f766e")}
   </td></tr>
 </table>
 """
@@ -1559,12 +1762,17 @@ def send_daily_digest():
     products_all = src_top_products_ga(limit=200)
     pages_df = src_top_pages_ga(limit=10)
 
+    # 03 organic (yesterday + prev)
     organic_engines_df = src_organic_search_engines_yesterday(limit=10)
     organic_detail_df = src_organic_search_detail_source_medium_yesterday(limit=15)
+    organic_engines_prev_df = src_organic_search_engines_day("2daysAgo", limit=10)
+    organic_detail_prev_df = src_organic_search_detail_source_medium_day("2daysAgo", limit=15)
 
+    # 04 ops
     coupon_df = src_coupon_performance_yesterday(limit=12)
     search_zero_buy_df = src_search_zero_purchase_yesterday(min_searches=20, limit=12)
     device_split_df = src_device_split_yesterday()
+    device_split_prev_df = src_device_split_day("2daysAgo")
     device_funnel_df = src_funnel_by_device_yesterday()
 
     products_top_df = products_all.sort_values("상품조회수", ascending=False) if not products_all.empty else products_all
@@ -1590,6 +1798,12 @@ def send_daily_digest():
         products_lowconv_df=products_lowconv_df,
         products_hiconv_df=products_hiconv_df,
         pages_df=pages_df,
+        organic_engines_df=organic_engines_df,
+        organic_detail_df=organic_detail_df,
+        device_split_df=device_split_df,
+        organic_engines_prev_df=organic_engines_prev_df,
+        organic_detail_prev_df=organic_detail_prev_df,
+        device_split_prev_df=device_split_prev_df,
     )
 
     critical_reasons = []
@@ -1612,6 +1826,9 @@ def send_daily_digest():
         search_zero_buy_df=search_zero_buy_df,
         device_split_df=device_split_df,
         device_funnel_df=device_funnel_df,
+        organic_engines_prev_df=organic_engines_prev_df,
+        organic_detail_prev_df=organic_detail_prev_df,
+        device_split_prev_df=device_split_prev_df,
     )
 
     if extra_html:
