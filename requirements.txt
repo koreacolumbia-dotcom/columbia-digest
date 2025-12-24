@@ -8,4 +8,9 @@ requests
 urllib3
 beautifulsoup4
 lxml
+pandas>=2.0.0
+google-cloud-bigquery>=3.0.0
+google-auth>=2.0.0
+pyarrow>=12.0.0
+db-dtypes>=1.0.0
 
