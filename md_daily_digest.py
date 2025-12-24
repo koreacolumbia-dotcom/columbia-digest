@@ -42,11 +42,17 @@ if GCP_SA_JSON:
 BQ_PROJECT = os.getenv("BQ_PROJECT", "columbia-ga4").strip()
 BQ_DATASET = os.getenv("BQ_DATASET", "mart").strip()
 
-SMTP_PROVIDER = os.getenv("SMTP_PROVIDER", "gmail").lower()  # "gmail" or "outlook"
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "koreacolumbia@gmail.com")
-SMTP_PASS = os.getenv("SMTP_PASS", "xxopfytdkxcyhisa")
+SMTP_PROVIDER = os.getenv("SMTP_PROVIDER", "").lower().strip()  # no default
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
+
+def _smtp_host_port():
+    if SMTP_PROVIDER == "outlook":
+        return ("smtp.office365.com", 587)
+    if SMTP_PROVIDER == "gmail":
+        return ("smtp.gmail.com", 587)
+    # fallback: explicit host/port required
+    return (os.getenv("SMTP_HOST", "").strip(), int(os.getenv("SMTP_PORT", "587")))
 
 MD_DAILY_RECIPIENTS = [
     e.strip() for e in os.getenv("MD_DAILY_RECIPIENTS", "hugh.kang@columbia.com").split(",") if e.strip()
@@ -100,6 +106,10 @@ def send_email_html(subject: str, html_body: str, recipients: List[str], attachm
         print(html_body[:3000])
         print("attachments:", [a[0] for a in attachments])
         return
+    if not SMTP_PROVIDER:
+      raise RuntimeError("SMTP_PROVIDER is missing (set gmail or outlook)")
+    if not (SMTP_USER and SMTP_PASS):
+      raise RuntimeError("SMTP_USER/SMTP_PASS missing (check GitHub Secrets/ENV)")
 
     host, port = _smtp_host_port()
 
