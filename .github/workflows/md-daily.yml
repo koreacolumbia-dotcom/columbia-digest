@@ -1,10 +1,8 @@
 name: MD Daily Digest (Test)
 
 on:
-  # ✅ 매일 오전 8:30 KST (= UTC 23:30)
   schedule:
-    - cron: "30 23 * * *"
-  # ✅ 수동 실행 버튼
+    - cron: "30 23 * * *"  # 08:30 KST
   workflow_dispatch:
 
 jobs:
@@ -22,22 +20,20 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas google-cloud-bigquery google-auth pyarrow
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run MD Daily Digest
         env:
-          # ---- GCP / BigQuery ----
           GCP_SA_JSON: ${{ secrets.GCP_SA_JSON }}
           BQ_PROJECT: columbia-ga4
           BQ_DATASET: mart
 
-          # ---- Mail ----
           SMTP_PROVIDER: outlook
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
 
-          # ✅ 테스트 단계: 기본값으로 hugh.kang@columbia.com만 발송
+          # 테스트면 이거 켜도 됨
           # MD_DAILY_RECIPIENTS: hugh.kang@columbia.com
-
         run: |
           python md_daily_digest.py
