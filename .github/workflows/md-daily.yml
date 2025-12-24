@@ -23,6 +23,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # ✅ 주입 확인(비밀번호 노출 X)
+      - name: Debug env (safe)
+        run: |
+          echo "SMTP_PROVIDER=${SMTP_PROVIDER}"
+          echo "SMTP_USER=${SMTP_USER}"
+          echo "SMTP_PASS_LEN=${#SMTP_PASS}"
+          echo "MD_DAILY_RECIPIENTS=${MD_DAILY_RECIPIENTS}"
+        env:
+          SMTP_PROVIDER: outlook
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MD_DAILY_RECIPIENTS: ${{ secrets.MD_DAILY_RECIPIENTS }}
+
       - name: Run MD Daily Digest
         env:
           GCP_SA_JSON: ${{ secrets.GCP_SA_JSON }}
@@ -33,7 +46,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
 
-          # 테스트면 이거 켜도 됨
-          # MD_DAILY_RECIPIENTS: hugh.kang@columbia.com
+          # ✅ recipients는 무조건 주입 추천
+          MD_DAILY_RECIPIENTS: ${{ secrets.MD_DAILY_RECIPIENTS }}
         run: |
           python md_daily_digest.py
