@@ -22,7 +22,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas google-cloud-bigquery google-auth
+          pip install pandas google-cloud-bigquery google-auth pyarrow
 
       - name: Run MD Daily Digest
         env:
@@ -36,7 +36,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
 
-          # ✅ 테스트용: 환경변수 없으면 hugh.kang@columbia.com 으로만 발송됨
+          # ✅ 테스트 단계: 기본값으로 hugh.kang@columbia.com만 발송
           # MD_DAILY_RECIPIENTS: hugh.kang@columbia.com
 
         run: |
