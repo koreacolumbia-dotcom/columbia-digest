@@ -56,17 +56,23 @@ MD_DAILY_RECIPIENTS = [
 # BigQuery client
 # -----------------------
 def _build_bq_client():
-    from google.cloud import bigquery
-
-    if SERVICE_ACCOUNT_FILE and os.path.exists(SERVICE_ACCOUNT_FILE):
+    """
+    Priority:
+    1) GCP_SA_JSON (service account json string) -> credentials from info
+    2) GOOGLE_APPLICATION_CREDENTIALS (path) -> ADC
+    3) Default ADC (for google-github-actions/auth)
+    """
+    sa_json = os.getenv("GCP_SA_JSON", "").strip()
+    if sa_json:
         from google.oauth2 import service_account
-        creds = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
-        )
-        project = getattr(creds, "project_id", None) or BQ_PROJECT
-        return bigquery.Client(project=project, credentials=creds)
+        from google.cloud import bigquery
+        info = json.loads(sa_json)
+        creds = service_account.Credentials.from_service_account_info(info)
+        return bigquery.Client(project=BQ_PROJECT, credentials=creds)
 
+    # ADC: works when GOOGLE_APPLICATION_CREDENTIALS is set
+    # or when GitHub Action auth already configured ADC
+    from google.cloud import bigquery
     return bigquery.Client(project=BQ_PROJECT)
 
 def bq_query_df(sql: str) -> pd.DataFrame:
