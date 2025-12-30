@@ -1,4 +1,4 @@
-name: MD Daily Digest (Test)
+name: MD Daily Digest (Gmail)
 
 on:
   schedule:
@@ -18,28 +18,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies (and verify)
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # BigQuery -> pandas 변환에 필요한 db-dtypes가 진짜 깔렸는지 검증
-          pip show db-dtypes
-          python -c "import db_dtypes; print('db_dtypes OK')"
 
-      - name: Run MD Daily Digest (Graph Mail)
+      - name: Run MD Daily Digest (Gmail SMTP)
         env:
-          # BigQuery
           GCP_SA_JSON: ${{ secrets.GCP_SA_JSON }}
           BQ_PROJECT: columbia-ga4
           BQ_DATASET: mart
 
-          # Microsoft Graph Mail
-          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
-          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
-          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-
-          # Recipients
+          SMTP_PROVIDER: gmail
+          SMTP_USER: ${{ secrets.SMTP_USER }}        # koreacolumbia@gmail.com
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}        # Gmail 앱 비밀번호(16자리)
           MD_DAILY_RECIPIENTS: ${{ secrets.MD_DAILY_RECIPIENTS }}
         run: |
           python md_daily_digest.py
