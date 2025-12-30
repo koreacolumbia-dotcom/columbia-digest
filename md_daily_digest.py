@@ -3,15 +3,19 @@
 
 """
 Columbia KR - MD Digest (DAILY)
-- 최근 24h / 어제 기준 Daily 모니터링
+- 어제(KST) 기준 Daily 모니터링
 - 주간 의사결정 ❌ / 즉시 액션용
 - Gmail / Outlook SMTP
 
-DATA:
-- alerts_daily (어제)
-- segment_by_channel_daily (어제)
-- daily_behavior_segments (어제)
-- abandon_recovery_summary_daily (어제)  ✅ checkout_abandon_last24h 대체
+DATA (mart):
+- alerts_daily
+- segment_by_channel_daily
+- daily_behavior_segments
+- abandon_recovery_summary_daily
+
+주의:
+- 테이블마다 날짜 컬럼명이 다를 수 있음(date vs snapshot_dt 등)
+  → 이 코드는 INFORMATION_SCHEMA로 날짜 컬럼을 자동 감지해서 필터링함.
 """
 
 import os
@@ -20,7 +24,8 @@ import smtplib
 import pandas as pd
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -32,7 +37,7 @@ from email.mime.application import MIMEApplication
 BQ_PROJECT = os.getenv("BQ_PROJECT", "columbia-ga4").strip()
 BQ_DATASET = os.getenv("BQ_DATASET", "mart").strip()
 
-SMTP_PROVIDER = os.getenv("SMTP_PROVIDER", "gmail").lower().strip()
+SMTP_PROVIDER = os.getenv("SMTP_PROVIDER", "gmail").lower().strip()  # gmail/outlook
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 
@@ -59,6 +64,64 @@ def _build_bq_client():
 
 def bq_query_df(sql: str) -> pd.DataFrame:
     return _build_bq_client().query(sql).result().to_dataframe()
+
+
+def _get_table_columns(table_fqn: str) -> List[str]:
+    """Return column list using INFORMATION_SCHEMA."""
+    project, dataset, table = table_fqn.split(".")
+    df = bq_query_df(f"""
+      SELECT column_name
+      FROM `{project}.{dataset}.INFORMATION_SCHEMA.COLUMNS`
+      WHERE table_name = '{table}'
+      ORDER BY ordinal_position
+    """)
+    if df is None or df.empty:
+        return []
+    return df["column_name"].tolist()
+
+
+def _pick_date_column(cols: List[str]) -> Optional[str]:
+    """Pick a likely date/snapshot column name."""
+    candidates = [
+        "date", "dt", "event_date", "snapshot_dt", "date_kst",
+        "partition_date", "run_date", "report_date"
+    ]
+    colset = set(cols)
+    for c in candidates:
+        if c in colset:
+            return c
+    return None
+
+
+def read_daily_table(table_fqn: str, target_date: str, limit_when_no_datecol: int = 5000) -> pd.DataFrame:
+    """
+    Read rows for target_date if date-like column exists.
+    If not, return latest snapshot (MAX of date-like col) or LIMIT fallback.
+    """
+    cols = _get_table_columns(table_fqn)
+    date_col = _pick_date_column(cols)
+
+    if date_col:
+        # 1) try exact date filter
+        sql = f"""
+          SELECT *
+          FROM `{table_fqn}`
+          WHERE {date_col} = '{target_date}'
+        """
+        df = bq_query_df(sql)
+
+        # 2) if empty, fallback to latest date_col
+        if df is None or df.empty:
+            sql2 = f"""
+              SELECT *
+              FROM `{table_fqn}`
+              WHERE {date_col} = (SELECT MAX({date_col}) FROM `{table_fqn}`)
+            """
+            df = bq_query_df(sql2)
+        return df
+
+    # No obvious date col: fallback (avoid breaking daily pipeline)
+    return bq_query_df(f"SELECT * FROM `{table_fqn}` LIMIT {int(limit_when_no_datecol)}")
 
 
 # -----------------------
@@ -111,13 +174,12 @@ def send_mail(subject: str, html: str, recipients: List[str], attachments: List[
 
 
 # -----------------------
-# HTML
+# HTML helpers
 # -----------------------
-def df_html(df: pd.DataFrame, n: int = 10) -> str:
+def df_html(df: pd.DataFrame, n: int = 12) -> str:
     if df is None or df.empty:
         return "<div style='color:#999;font-size:12px;'>데이터 없음</div>"
-    d = df.head(n).copy()
-    return d.to_html(index=False, border=0)
+    return df.head(n).to_html(index=False, border=0)
 
 
 def card(title: str, desc: str, body: str) -> str:
@@ -130,43 +192,36 @@ def card(title: str, desc: str, body: str) -> str:
     """
 
 
+def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    if df is None:
+        df = pd.DataFrame()
+    return df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+
+
 # -----------------------
 # MAIN
 # -----------------------
 def run_md_daily():
     kst = ZoneInfo("Asia/Seoul")
     today = datetime.now(kst).date()
-    yesterday = today - timedelta(days=1)
+    yesterday = (today - timedelta(days=1)).isoformat()
 
-    df_alerts = bq_query_df(f"""
-      SELECT *
-      FROM `{BQ_PROJECT}.{BQ_DATASET}.alerts_daily`
-      WHERE date = '{yesterday}'
-    """)
+    alerts_fqn  = f"{BQ_PROJECT}.{BQ_DATASET}.alerts_daily"
+    channel_fqn = f"{BQ_PROJECT}.{BQ_DATASET}.segment_by_channel_daily"
+    behavior_fqn= f"{BQ_PROJECT}.{BQ_DATASET}.daily_behavior_segments"
+    abandon_fqn = f"{BQ_PROJECT}.{BQ_DATASET}.abandon_recovery_summary_daily"
 
-    df_channel = bq_query_df(f"""
-      SELECT *
-      FROM `{BQ_PROJECT}.{BQ_DATASET}.segment_by_channel_daily`
-      WHERE snapshot_dt = '{yesterday}'
-    """)
-
-    df_behavior = bq_query_df(f"""
-      SELECT *
-      FROM `{BQ_PROJECT}.{BQ_DATASET}.daily_behavior_segments`
-      WHERE date = '{yesterday}'
-    """)
-
-    df_abandon_summary = bq_query_df(f"""
-      SELECT *
-      FROM `{BQ_PROJECT}.{BQ_DATASET}.abandon_recovery_summary_daily`
-      WHERE date = '{yesterday}'
-    """)
+    # ✅ 날짜컬럼 자동 감지해서 가져오기 (date vs snapshot_dt 문제 해결)
+    df_alerts = read_daily_table(alerts_fqn, yesterday)
+    df_channel = read_daily_table(channel_fqn, yesterday)
+    df_behavior = read_daily_table(behavior_fqn, yesterday)
+    df_abandon = read_daily_table(abandon_fqn, yesterday)
 
     blocks = [
         card("🚨 이상 징후 (Alerts)", "어제 기준 급변 지표", df_html(df_alerts, 10)),
         card("📊 채널별 Daily 성과", "어제 기준 유입/성과 흐름", df_html(df_channel, 15)),
-        card("👥 유저 행동 세그먼트", "어제 기준 유저 질 변화", df_html(df_behavior, 15)),
-        card("🛒 Abandon Recovery 요약", "어제 기준 이탈/복구 요약", df_html(df_abandon_summary, 15)),
+        card("👥 유저 행동 세그먼트", "어제 기준 유저 질/관여도(최근 7일/3일 윈도우)", df_html(df_behavior, 15)),
+        card("🛒 Abandon Recovery 요약", "어제 기준 이탈/복구 요약", df_html(df_abandon, 15)),
     ]
 
     html = f"""
@@ -176,10 +231,10 @@ def run_md_daily():
     """
 
     attachments = [
-        (f"alerts_daily_{yesterday}.csv", df_alerts.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")),
-        (f"segment_by_channel_daily_{yesterday}.csv", df_channel.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")),
-        (f"daily_behavior_segments_{yesterday}.csv", df_behavior.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")),
-        (f"abandon_recovery_summary_daily_{yesterday}.csv", df_abandon_summary.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")),
+        (f"alerts_daily_{yesterday}.csv", df_to_csv_bytes(df_alerts)),
+        (f"segment_by_channel_daily_{yesterday}.csv", df_to_csv_bytes(df_channel)),
+        (f"daily_behavior_segments_{yesterday}.csv", df_to_csv_bytes(df_behavior)),
+        (f"abandon_recovery_summary_daily_{yesterday}.csv", df_to_csv_bytes(df_abandon)),
     ]
 
     send_mail(
