@@ -1,0 +1,41 @@
+name: MD Daily Digest
+
+on:
+  schedule:
+    - cron: "30 23 * * *"   # 매일 08:30 KST
+  workflow_dispatch:
+
+jobs:
+  md-daily:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run MD Daily Digest
+        env:
+          # BigQuery
+          GCP_SA_JSON: ${{ secrets.GCP_SA_JSON }}
+          BQ_PROJECT: columbia-ga4
+          BQ_DATASET: mart
+
+          # SMTP (Gmail / Outlook 둘 다 가능)
+          SMTP_PROVIDER: gmail
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+
+          # Recipients
+          MD_DAILY_RECIPIENTS: ${{ secrets.MD_DAILY_RECIPIENTS }}
+        run: |
+          python md_daily_digest.py
