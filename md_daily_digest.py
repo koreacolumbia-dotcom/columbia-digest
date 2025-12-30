@@ -308,13 +308,7 @@ def run_md_daily():
     {''.join(blocks)}
     """
 
-    attachments = [
-        (f"md_high_intent_items_daily_{yesterday}.csv", df_to_csv_bytes(df_hot)),
-        (f"md_low_cvr_high_view_items_weekly_latest_{yesterday}.csv", df_to_csv_bytes(df_fix)),
-        (f"alerts_daily_{yesterday}.csv", df_to_csv_bytes(df_alerts)),
-        (f"segment_by_channel_daily_{yesterday}.csv", df_to_csv_bytes(df_channel)),
-        (f"abandon_recovery_summary_daily_{yesterday}.csv", df_to_csv_bytes(df_abandon)),
-    ]
+    attachments = []
 
     send_mail(
         subject=f"[MD Daily] 핵심상품/Alerts/채널/Abandon 요약 ({yesterday})",
