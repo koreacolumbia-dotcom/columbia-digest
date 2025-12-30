@@ -147,7 +147,7 @@ def run_md_daily():
     df_channel = bq_query_df(f"""
       SELECT *
       FROM `{BQ_PROJECT}.{BQ_DATASET}.segment_by_channel_daily`
-      WHERE date = '{yesterday}'
+      WHERE snapshot_dt = '{yesterday}'
     """)
 
     df_behavior = bq_query_df(f"""
