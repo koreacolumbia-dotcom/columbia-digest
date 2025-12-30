@@ -13,5 +13,6 @@ google-cloud-bigquery
 google-auth
 db-dtypes
 pyarrow
+msal
 
 
