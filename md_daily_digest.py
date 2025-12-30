@@ -47,8 +47,9 @@ SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 
 MD_DAILY_RECIPIENTS = [
-    e.strip() for e in os.getenv("hugh.kang@columbia.com", "").split(",") if e.strip()
+    e.strip() for e in os.getenv("MD_DAILY_RECIPIENTS", "").split(",") if e.strip()
 ]
+
 
 
 # -----------------------
