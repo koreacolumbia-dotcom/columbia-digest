@@ -1,12 +1,12 @@
-name: MD Daily Digest (Gmail)
+name: MD Weekly Digest
 
 on:
   schedule:
-    - cron: "30 23 * * *"  # 08:30 KST
+    - cron: "30 23 * * 0"  # 매주 월요일 08:30 KST
   workflow_dispatch:
 
 jobs:
-  md-daily:
+  md-weekly:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,15 +23,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run MD Daily Digest (Gmail SMTP)
+      - name: Run MD Weekly Digest
         env:
           GCP_SA_JSON: ${{ secrets.GCP_SA_JSON }}
           BQ_PROJECT: columbia-ga4
           BQ_DATASET: mart
 
           SMTP_PROVIDER: gmail
-          SMTP_USER: ${{ secrets.SMTP_USER }}        # koreacolumbia@gmail.com
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}        # Gmail 앱 비밀번호(16자리)
-          MD_DAILY_RECIPIENTS: ${{ secrets.MD_DAILY_RECIPIENTS }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+
+          MD_WEEKLY_RECIPIENTS: ${{ secrets.MD_WEEKLY_RECIPIENTS }}
         run: |
-          python md_daily_digest.py
+          python md_weekly_digest.py
