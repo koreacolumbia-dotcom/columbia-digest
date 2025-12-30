@@ -4,35 +4,32 @@
 """
 Columbia KR - MD Digest (DAILY)
 - BigQuery 결과 요약 + CSV 자동 첨부
-- Outlook(HTML) 보기 최적화
-- Microsoft Graph API로 메일 발송 (SMTP 미사용)
+- Outlook/Gmail(HTML) 보기 최적화
+- Gmail SMTP로 메일 발송
 
 Required ENV:
   # BigQuery
   BQ_PROJECT=columbia-ga4 (default)
   BQ_DATASET=mart (default)
-  GCP_SA_JSON=<service account json string>   # 권장 (GitHub Actions에서 사용)
+  GCP_SA_JSON=<service account json string>
 
-  # Microsoft Graph Mail (Application permission)
-  MS_TENANT_ID=...
-  MS_CLIENT_ID=...
-  MS_CLIENT_SECRET=...
-  MAIL_FROM=md_report@columbia.com
-
-  # Recipients
+  # SMTP (Gmail 권장)
+  SMTP_PROVIDER=gmail
+  SMTP_USER=koreacolumbia@gmail.com
+  SMTP_PASS=<gmail app password>
   MD_DAILY_RECIPIENTS="a@x.com,b@x.com"
 """
 
 import os
 import json
-import base64
+import smtplib
+import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Tuple
-
-import pandas as pd
-import requests
-import msal
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 
 
 # -----------------------
@@ -41,28 +38,31 @@ import msal
 BQ_PROJECT = os.getenv("BQ_PROJECT", "columbia-ga4").strip()
 BQ_DATASET = os.getenv("BQ_DATASET", "mart").strip()
 
+SMTP_PROVIDER = os.getenv("SMTP_PROVIDER", "gmail").lower().strip()
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
+
 MD_DAILY_RECIPIENTS = [
-    e.strip()
-    for e in os.getenv("MD_DAILY_RECIPIENTS", "").split(",")
-    if e.strip()
+    e.strip() for e in os.getenv("MD_DAILY_RECIPIENTS", "").split(",") if e.strip()
 ]
 
-# Graph
-MS_TENANT_ID = os.getenv("MS_TENANT_ID", "").strip()
-MS_CLIENT_ID = os.getenv("MS_CLIENT_ID", "").strip()
-MS_CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET", "").strip()
-MAIL_FROM = os.getenv("MAIL_FROM", "").strip()
+
+def _smtp_host_port():
+    if SMTP_PROVIDER == "gmail":
+        return ("smtp.gmail.com", 587)
+    if SMTP_PROVIDER == "outlook":
+        return ("smtp.office365.com", 587)
+    host = os.getenv("SMTP_HOST", "").strip()
+    port = int(os.getenv("SMTP_PORT", "587"))
+    if not host:
+        raise RuntimeError("SMTP_HOST missing (when SMTP_PROVIDER is not gmail/outlook)")
+    return (host, port)
 
 
 # -----------------------
 # BigQuery client
 # -----------------------
 def _build_bq_client():
-    """
-    Priority:
-    1) GCP_SA_JSON (service account json string) -> credentials from info
-    2) ADC (if configured elsewhere)
-    """
     sa_json = os.getenv("GCP_SA_JSON", "").strip()
     from google.cloud import bigquery
 
@@ -78,82 +78,46 @@ def _build_bq_client():
 def bq_query_df(sql: str) -> pd.DataFrame:
     client = _build_bq_client()
     job = client.query(sql)
-    # db-dtypes 필요 (requirements.txt에 db-dtypes)
     return job.result().to_dataframe()
 
 
 # -----------------------
-# Graph Mail
+# Mail (SMTP)
 # -----------------------
-def _require_graph_env():
-    missing = []
-    if not MS_TENANT_ID:
-        missing.append("MS_TENANT_ID")
-    if not MS_CLIENT_ID:
-        missing.append("MS_CLIENT_ID")
-    if not MS_CLIENT_SECRET:
-        missing.append("MS_CLIENT_SECRET")
-    if not MAIL_FROM:
-        missing.append("MAIL_FROM")
-    if missing:
-        raise RuntimeError(f"Missing Graph ENV: {', '.join(missing)}")
-
-
-def _get_graph_token() -> str:
-    _require_graph_env()
-
-    app = msal.ConfidentialClientApplication(
-        client_id=MS_CLIENT_ID,
-        authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
-        client_credential=MS_CLIENT_SECRET,
-    )
-    token = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
-    if "access_token" not in token:
-        raise RuntimeError(f"Graph token error: {token}")
-    return token["access_token"]
-
-
 def send_email_html(subject: str, html_body: str, recipients: List[str], attachments: List[Tuple[str, bytes]]):
     if not recipients:
         print("[WARN] MD_DAILY_RECIPIENTS empty - skip send")
         return
+    if not SMTP_USER:
+        raise RuntimeError("SMTP_USER missing (check GitHub Secrets)")
+    if not SMTP_PASS:
+        raise RuntimeError("SMTP_PASS missing (use Gmail App Password)")
 
-    access_token = _get_graph_token()
+    host, port = _smtp_host_port()
 
-    graph_attachments = []
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_USER
+    msg["To"] = ", ".join(recipients)
+
+    alt = MIMEMultipart("alternative")
+    msg.attach(alt)
+    alt.attach(MIMEText("MD Digest (HTML). If you can't see it, open in a mail client.", "plain", "utf-8"))
+    alt.attach(MIMEText(html_body, "html", "utf-8"))
+
     for fname, fbytes in attachments:
-        graph_attachments.append({
-            "@odata.type": "#microsoft.graph.fileAttachment",
-            "name": fname,
-            "contentType": "text/csv",
-            "contentBytes": base64.b64encode(fbytes).decode("utf-8"),
-        })
+        part = MIMEApplication(fbytes, Name=fname)
+        part["Content-Disposition"] = f'attachment; filename="{fname}"'
+        msg.attach(part)
 
-    payload = {
-        "message": {
-            "subject": subject,
-            "body": {"contentType": "HTML", "content": html_body},
-            "toRecipients": [{"emailAddress": {"address": r}} for r in recipients],
-            "attachments": graph_attachments,
-        },
-        "saveToSentItems": True,
-    }
+    with smtplib.SMTP(host, port, timeout=30) as server:
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.sendmail(SMTP_USER, recipients, msg.as_string())
 
-    url = f"https://graph.microsoft.com/v1.0/users/{MAIL_FROM}/sendMail"
-    res = requests.post(
-        url,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=60,
-    )
-
-    if res.status_code != 202:
-        raise RuntimeError(f"Graph sendMail failed: {res.status_code} {res.text}")
-
-    print(f"[OK] Graph mail sent: from={MAIL_FROM}, to={len(recipients)}, attachments={len(attachments)}")
+    print(f"[OK] SMTP mail sent via {SMTP_PROVIDER}: from={SMTP_USER}, to={len(recipients)}, attachments={len(attachments)}")
 
 
 # -----------------------
@@ -213,7 +177,7 @@ def build_html(date_label: str, blocks: List[str]) -> str:
     </div>
 
     <div style="font-size:11px;color:#98a2b3;text-align:right;margin-top:12px;">
-      Generated by BigQuery (mart) · mailed via Microsoft Graph
+      Generated by BigQuery (mart) · mailed via Gmail SMTP
     </div>
   </div>
 </body>
@@ -221,7 +185,7 @@ def build_html(date_label: str, blocks: List[str]) -> str:
 
 
 # -----------------------
-# Data logic (DAILY = latest week only)
+# Data logic
 # -----------------------
 def latest_week_filter_sql(view_fqn: str) -> str:
     return f"""
@@ -236,7 +200,6 @@ def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
 
 
 def run_md_daily():
-    # KST 기준 날짜
     kst = ZoneInfo("Asia/Seoul")
     today = datetime.now(tz=kst).strftime("%Y-%m-%d")
 
@@ -244,7 +207,6 @@ def run_md_daily():
     v_low  = f"{BQ_PROJECT}.{BQ_DATASET}.v_md_low_cvr_items"
     t_item = f"{BQ_PROJECT}.{BQ_DATASET}.pdp_to_atc_item_weekly"
 
-    # 최신 주차만
     df_high = bq_query_df(latest_week_filter_sql(v_high))
     df_low  = bq_query_df(latest_week_filter_sql(v_low))
     df_item = bq_query_df(f"""
