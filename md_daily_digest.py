@@ -5,22 +5,20 @@
 Columbia KR - MD Digest (DAILY)
 - 어제(KST) 기준 Daily 모니터링(운영/즉시 액션용)
 - Gmail / Outlook SMTP
+- MD 가독성(한글 컬럼명/정렬/소수점) 최적화
 
 DATA (mart):
-[모니터링]
 - alerts_daily
 - segment_by_channel_daily
 - abandon_recovery_summary_daily
-- daily_behavior_segments  (원본, 필요 시 참고)
+- md_high_intent_items_daily
+- md_low_cvr_high_view_items_weekly
 
-[MD 핵심 상품 요약 - Scheduled Query로 미리 생성 권장]
-- md_high_intent_items_daily              (A) 구매 직전 유저가 멈춘 상품 TOP (어제 스냅샷)
-- md_low_cvr_high_view_items_weekly       (B) 노출 많고 전환 약한 상품 TOP (최신 주차 스냅샷)
-
-필수 ENV:
+ENV:
 - BQ_PROJECT, BQ_DATASET, (권장) GCP_SA_JSON
 - SMTP_PROVIDER=gmail|outlook, SMTP_USER, SMTP_PASS
 - MD_DAILY_RECIPIENTS="a@x.com,b@x.com"
+- INCLUDE_ATTACHMENTS=0|1  (default 0)
 """
 
 import os
@@ -50,6 +48,7 @@ MD_DAILY_RECIPIENTS = [
     e.strip() for e in os.getenv("MD_DAILY_RECIPIENTS", "").split(",") if e.strip()
 ]
 
+INCLUDE_ATTACHMENTS = os.getenv("INCLUDE_ATTACHMENTS", "0").strip() == "1"
 
 
 # -----------------------
@@ -176,20 +175,120 @@ def send_mail(subject: str, html: str, recipients: List[str], attachments: List[
 
 
 # -----------------------
-# HTML helpers
+# Formatting helpers (MD UX)
 # -----------------------
-def df_html(df: pd.DataFrame, n: int = 12) -> str:
+def _coerce_numeric(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+def _rename_columns(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    return df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
+
+
+def _round_cols(df: pd.DataFrame, round0: List[str] = None, round1: List[str] = None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    round0 = round0 or []
+    round1 = round1 or []
+
+    df = _coerce_numeric(df, round0 + round1)
+
+    for c in round0:
+        if c in df.columns:
+            df[c] = df[c].round(0).astype("Int64")  # 정수처럼 표시
+    for c in round1:
+        if c in df.columns:
+            df[c] = df[c].round(1)
+
+    return df
+
+
+def _format_pct_if_needed(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """
+    pdp_to_atc_user_cvr 값이 0.0136 같은 비율(0~1)로 들어오면 100 곱해서 %로 보이게.
+    이미 1.3 / 13.6 처럼 들어오면 그대로.
+    """
+    if df is None or df.empty or col not in df.columns:
+        return df
+    s = pd.to_numeric(df[col], errors="coerce")
+    if s.dropna().empty:
+        return df
+
+    # 휴리스틱: 대부분이 0~1 사이면 비율로 판단
+    ratio_share = ((s >= 0) & (s <= 1)).mean()
+    if ratio_share >= 0.8:
+        df[col] = (s * 100.0)
+    else:
+        df[col] = s
+    return df
+
+
+def _make_table_html(df: pd.DataFrame, center_cols: List[str] = None, max_rows: int = 20) -> str:
+    """
+    Outlook-friendly: inline style + fixed layout
+    center_cols: column names to center-align
+    """
     if df is None or df.empty:
         return "<div style='color:#999;font-size:12px;'>데이터 없음</div>"
-    return df.head(n).to_html(index=False, border=0)
+
+    center_cols = center_cols or []
+    d = df.head(max_rows).copy()
+
+    # Build HTML manually for safer alignment
+    cols = list(d.columns)
+
+    table_style = (
+        "width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;"
+    )
+    th_base = (
+        "text-align:left; padding:6px 8px; background:#f3f6fb; border-bottom:1px solid #e6eaf2;"
+        "white-space:normal; overflow-wrap:anywhere;"
+    )
+    td_base = (
+        "text-align:left; padding:6px 8px; border-bottom:1px solid #f0f2f7;"
+        "white-space:normal; overflow-wrap:anywhere;"
+    )
+
+    # alignment map by column
+    align_map = {c: ("center" if c in center_cols else "left") for c in cols}
+
+    html = [f"<table style='{table_style}'>"]
+    # header
+    html.append("<thead><tr>")
+    for c in cols:
+        html.append(
+            f"<th style='{th_base} text-align:{align_map[c]};'>{str(c)}</th>"
+        )
+    html.append("</tr></thead>")
+
+    # body
+    html.append("<tbody>")
+    for _, row in d.iterrows():
+        html.append("<tr>")
+        for c in cols:
+            v = row[c]
+            if pd.isna(v):
+                v = ""
+            html.append(
+                f"<td style='{td_base} text-align:{align_map[c]};'>{v}</td>"
+            )
+        html.append("</tr>")
+    html.append("</tbody></table>")
+
+    return "".join(html)
 
 
-def card(title: str, desc: str, body: str) -> str:
+def card(title: str, desc: str, body_html: str) -> str:
     return f"""
     <div style="background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:14px;margin-bottom:12px;">
-      <div style="font-weight:900;">{title}</div>
+      <div style="font-weight:900;font-size:13px;">{title}</div>
       <div style="font-size:12px;color:#667085;margin-top:4px;line-height:1.4;">{desc}</div>
-      <div style="margin-top:10px;">{body}</div>
+      <div style="margin-top:10px;">{body_html}</div>
     </div>
     """
 
@@ -208,108 +307,179 @@ def run_md_daily():
     today = datetime.now(kst).date()
     yesterday = (today - timedelta(days=1)).isoformat()
 
-    # Base monitoring tables
+    # FQNs
     alerts_fqn  = f"{BQ_PROJECT}.{BQ_DATASET}.alerts_daily"
     channel_fqn = f"{BQ_PROJECT}.{BQ_DATASET}.segment_by_channel_daily"
     abandon_fqn = f"{BQ_PROJECT}.{BQ_DATASET}.abandon_recovery_summary_daily"
 
-    # MD 핵심 상품 요약 테이블(예약쿼리로 생성 권장)
-    # - 없으면(테이블 미생성) 아래 fallback 쿼리로 계산해서 사용
     hot_items_fqn = f"{BQ_PROJECT}.{BQ_DATASET}.md_high_intent_items_daily"
     fix_items_fqn = f"{BQ_PROJECT}.{BQ_DATASET}.md_low_cvr_high_view_items_weekly"
 
+    # --- base monitoring ---
     df_alerts  = read_daily_table(alerts_fqn, yesterday)
     df_channel = read_daily_table(channel_fqn, yesterday)
     df_abandon = read_daily_table(abandon_fqn, yesterday)
 
-    # ---- A) 구매 직전 유저가 멈춘 상품 TOP ----
-    try:
-        df_hot = read_daily_table(hot_items_fqn, yesterday)
-    except Exception as e:
-        print(f"[WARN] fallback hot_items (table missing or query fail): {e}")
-        df_hot = bq_query_df(f"""
-          SELECT
-            snapshot_dt,
-            last_item_category,
-            last_item_name,
-            COUNT(DISTINCT user_pseudo_id) AS users,
-            SUM(atc_cnt_3d) AS atc_cnt_3d_sum,
-            AVG(view_item_cnt_7d) AS avg_view_7d
-          FROM `{BQ_PROJECT}.{BQ_DATASET}.daily_behavior_segments`
-          WHERE snapshot_dt = DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 1 DAY)
-            AND atc_cnt_3d >= 1
-            AND purchase_cnt_7d = 0
-            AND last_item_name IS NOT NULL
-          GROUP BY 1,2,3
-          ORDER BY users DESC
-          LIMIT 50
-        """)
+    # --- A: 구매 직전 유저가 멈춘 상품 TOP ---
+    # (테이블이 이미 한글 컬럼이면 그대로 쓰고, 아니면 python에서 rename)
+    df_hot = read_daily_table(hot_items_fqn, yesterday)
 
-    # ---- B) 노출 많고 전환 약한 상품 TOP (최신 주차) ----
-    try:
-        df_fix = bq_query_df(f"""
-          SELECT *
-          FROM `{fix_items_fqn}`
-          ORDER BY pdp_view_users DESC, pdp_to_atc_user_cvr ASC
-          LIMIT 50
-        """)
-    except Exception as e:
-        print(f"[WARN] fallback fix_items (table missing or query fail): {e}")
-        df_fix = bq_query_df(f"""
-          WITH latest AS (
-            SELECT MAX(week_start_dt) AS wk
-            FROM `{BQ_PROJECT}.{BQ_DATASET}.pdp_to_atc_item_weekly`
-          )
-          SELECT
-            week_start_dt,
-            item_category,
-            item_name,
-            pdp_view_users,
-            atc_users,
-            pdp_to_atc_user_cvr
-          FROM `{BQ_PROJECT}.{BQ_DATASET}.pdp_to_atc_item_weekly`
-          WHERE week_start_dt = (SELECT wk FROM latest)
-            AND pdp_view_users >= 200
-          ORDER BY pdp_view_users DESC, pdp_to_atc_user_cvr ASC
-          LIMIT 50
-        """)
+    # rename/format for df_hot (둘 다 대응)
+    hot_rename = {
+        "snapshot_dt": "기준일",
+        "last_item_category": "카테고리",
+        "last_item_name": "상품명",
+        "users": "유저수",
+        "atc_cnt_3d_sum": "최근3일_ATC합",
+        "avg_view_7d": "최근7일_평균조회",
+        "view_item_cnt_7d": "최근7일_평균조회",  # 혹시 다른 이름일 때
+    }
+    df_hot = _rename_columns(df_hot, hot_rename)
+    df_hot = _round_cols(df_hot, round0=["최근7일_평균조회"])
 
-    # Build email blocks (MD 읽는 순서 기준)
+    # --- B: 전환 개선 후보 TOP (weekly source) ---
+    # 최신주차 기준 데이터는 유지하되, 표에서 “주차시작일/종료일”은 숨기고 “기준일(어제)”만 보여줌
+    df_fix = bq_query_df(f"""
+      WITH latest AS (
+        SELECT MAX(week_start_dt) AS wk
+        FROM `{fix_items_fqn}`
+      )
+      SELECT *
+      FROM `{fix_items_fqn}`
+      WHERE week_start_dt = (SELECT wk FROM latest)
+      ORDER BY pdp_view_users DESC, pdp_to_atc_user_cvr ASC
+      LIMIT 50
+    """)
+
+    fix_rename = {
+        "week_start_dt": "주차시작일",
+        "week_end_dt": "주차종료일",
+        "item_id": "상품ID",
+        "item_name": "상품명",
+        "item_category": "카테고리",
+        "pdp_views": "PDP조회수",
+        "atc_events": "ATC이벤트수",
+        "pdp_view_users": "PDP유저수",
+        "atc_users": "ATC유저수",
+        "pdp_to_atc_user_cvr": "PDP→ATC_유저CVR(%)",
+        "pdp_to_atc_event_rate": "PDP→ATC_이벤트전환율(%)",
+    }
+    df_fix = _rename_columns(df_fix, fix_rename)
+
+    # CVR 소수점 1자리 + (0~1 비율이면 100곱해서 %로)
+    df_fix = _format_pct_if_needed(df_fix, "PDP→ATC_유저CVR(%)")
+    df_fix = _format_pct_if_needed(df_fix, "PDP→ATC_이벤트전환율(%)")
+    df_fix = _round_cols(df_fix, round1=["PDP→ATC_유저CVR(%)", "PDP→ATC_이벤트전환율(%)"])
+
+    # 표에서 주차 컬럼이 이상해 보이는 문제 대응: 표시용으로 "기준일" 추가 + 주차컬럼 드랍
+    if not df_fix.empty:
+        df_fix.insert(0, "기준일", yesterday)
+        for drop_c in ["주차시작일", "주차종료일"]:
+            if drop_c in df_fix.columns:
+                df_fix.drop(columns=[drop_c], inplace=True)
+
+    # --- abandon: 어제 기준 + 소수점 1자리(매출 등) ---
+    abandon_rename = {
+        "snapshot_dt": "기준일",
+        "segment": "세그먼트",
+        "device_category": "디바이스",
+        "abandon_users": "이탈유저수",
+        "recovered_users": "복구유저수",
+        "recovered_revenue": "복구매출",
+    }
+    df_abandon = _rename_columns(df_abandon, abandon_rename)
+    df_abandon = _round_cols(df_abandon, round1=["복구매출"])
+
+    # --- channel: 가능한 부분만 한글/정렬 ---
+    # (스키마를 정확히 모르니 흔한 컬럼만 매핑)
+    channel_rename = {
+        "snapshot_dt": "기준일",
+        "date": "기준일",
+        "channel_group": "채널",
+        "channel": "채널",
+        "source_medium": "소스/매체",
+        "sessions": "세션",
+        "users": "유저수",
+        "transactions": "구매수",
+        "revenue": "매출",
+        "cvr": "CVR(%)",
+    }
+    df_channel = _rename_columns(df_channel, channel_rename)
+    df_channel = _round_cols(df_channel, round1=["CVR(%)", "매출"])
+
+    # --- alerts: 가능한 부분만 정리 ---
+    alerts_rename = {"snapshot_dt": "기준일", "date": "기준일"}
+    df_alerts = _rename_columns(df_alerts, alerts_rename)
+
+    # Center align columns (MD readability)
+    center_cols_hot = [c for c in ["기준일", "카테고리"] if c in df_hot.columns]
+    center_cols_fix = [c for c in ["기준일", "카테고리"] if c in df_fix.columns]
+    center_cols_channel = [c for c in ["기준일", "채널", "소스/매체"] if c in df_channel.columns]
+    center_cols_abandon = [c for c in ["기준일", "세그먼트", "디바이스"] if c in df_abandon.columns]
+
+    # Build blocks (MD 읽는 순서)
     blocks = [
         card(
             "🧲 구매 직전 유저가 멈춘 상품 TOP",
             "최근 3일 장바구니 담음 + 최근 7일 구매 없음(‘아까운 유저’). 오늘 상단/기획전/혜택/정렬로 회수 타겟.",
-            df_html(df_hot, 20)
+            _make_table_html(df_hot, center_cols=center_cols_hot, max_rows=20),
         ),
         card(
-            "🔧 전환 개선 후보 TOP (최신 주차)",
-            "노출(유저)은 많은데 PDP→ATC 전환이 낮은 상품. PDP/옵션/혜택/리뷰/배송 문구/재고표시 점검 우선순위.",
-            df_html(df_fix, 20)
+            "🔧 전환 개선 후보 TOP",
+            "노출(유저)은 많은데 PDP→ATC 전환이 낮은 상품. PDP/옵션/혜택/리뷰/배송 문구/재고표시 점검 우선순위. (최신 주차 기준)",
+            _make_table_html(df_fix, center_cols=center_cols_fix, max_rows=20),
         ),
         card(
             "🚨 이상 징후 (Alerts)",
             "어제 기준 급변 지표(없으면 정상).",
-            df_html(df_alerts, 10)
+            _make_table_html(df_alerts, center_cols=["기준일"] if "기준일" in df_alerts.columns else [], max_rows=12),
         ),
         card(
             "📊 채널별 Daily 성과",
             "어제 기준 유입/성과 흐름(유입 감소 vs 상품/전환 문제 분리).",
-            df_html(df_channel, 15)
+            _make_table_html(df_channel, center_cols=center_cols_channel, max_rows=15),
         ),
         card(
             "🛒 Abandon Recovery 요약",
             "어제 기준 이탈/복구 요약(결제/혜택/배송/재고/옵션/UX 이슈 신호).",
-            df_html(df_abandon, 15)
+            _make_table_html(df_abandon, center_cols=center_cols_abandon, max_rows=15),
         ),
     ]
 
-    html = f"""
-    <h2 style="margin:0;">MD Daily Digest</h2>
-    <p style="margin:6px 0 14px;color:#475467;">기준일: {yesterday} (KST)</p>
-    {''.join(blocks)}
-    """
+    html = f"""<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"></head>
+<body style="margin:0;background:#f5f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans KR',Arial,sans-serif;">
+  <div style="max-width:980px;margin:0 auto;padding:18px 12px;">
+    <div style="background:#ffffff;border:1px solid #e6eaf2;border-radius:14px;padding:16px 16px;">
+      <div style="font-size:18px;font-weight:900;color:#0055a5;">MD Daily Digest</div>
+      <div style="font-size:13px;color:#475467;margin-top:4px;">기준일: {yesterday} (KST) · 즉시 액션용 모니터링</div>
+      <div style="font-size:12px;color:#667085;margin-top:10px;line-height:1.6;">
+        - 상단 2개 블록이 MD 액션 핵심(회수/개선 상품)<br/>
+        - Alerts/채널/Abandon은 “원인 분리(유입 vs 전환 vs 이탈)”용
+      </div>
+    </div>
 
-    attachments = []
+    <div style="margin-top:14px;">
+      {''.join(blocks)}
+    </div>
+
+    <div style="font-size:11px;color:#98a2b3;text-align:right;margin-top:10px;">
+      Generated by BigQuery (mart) · mailed via Python SMTP
+    </div>
+  </div>
+</body>
+</html>"""
+
+    attachments: List[Tuple[str, bytes]] = []
+    if INCLUDE_ATTACHMENTS:
+        attachments = [
+            (f"md_high_intent_items_daily_{yesterday}.csv", df_to_csv_bytes(df_hot)),
+            (f"md_low_cvr_high_view_items_weekly_latest_asof_{yesterday}.csv", df_to_csv_bytes(df_fix)),
+            (f"alerts_daily_{yesterday}.csv", df_to_csv_bytes(df_alerts)),
+            (f"segment_by_channel_daily_{yesterday}.csv", df_to_csv_bytes(df_channel)),
+            (f"abandon_recovery_summary_daily_{yesterday}.csv", df_to_csv_bytes(df_abandon)),
+        ]
 
     send_mail(
         subject=f"[MD Daily] 핵심상품/Alerts/채널/Abandon 요약 ({yesterday})",
