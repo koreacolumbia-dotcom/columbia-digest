@@ -14,5 +14,8 @@ google-auth
 db-dtypes
 pyarrow
 msal
+python-dateutil
+pywin32
+openpyxl
 
 
